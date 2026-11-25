@@ -1,0 +1,32 @@
+# Pythonキャッシュ
+__pycache__/
+*.py[cod]
+
+# テスト・解析ツールのキャッシュ
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# 仮想環境
+.venv/
+.venv*/
+venv/
+
+# ビルド成果物
+build/
+dist/
+*.egg-info/
+
+# テスト・型検査の出力
+.coverage.*
+coverage.xml
+
+# エディタ・OS
+.idea/
+.vscode/
+.DS_Store
+
+# シミュレーションのローカル出力
+var/
