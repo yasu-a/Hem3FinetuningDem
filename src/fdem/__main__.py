@@ -30,21 +30,16 @@ SEED = 0
 LOSS_PLOT_PATH = Path("var/loss.png")
 LER_PLOT_PATH = Path("var/ler.png")
 
-physical_device_circuit = build_physical_device_circuit(
-    DISTANCE,
-    ROUNDS,
-    PHYSICAL_ERROR_RATE,
-)
+def build_dem(circuit: stim.Circuit) -> stim.DetectorErrorModel:
+    """Build a flattened detector error model from a circuit.
 
-def build_naive_dem() -> stim.DetectorErrorModel:
-    """Build a flattened naive DEM from the physical device circuit model.
+    Args:
+        circuit: Circuit to convert into a detector error model.
 
     Returns:
         The circuit-derived detector error model with repeat blocks expanded.
     """
-    return physical_device_circuit.detector_error_model(
-        decompose_errors=True
-    ).flattened()
+    return circuit.detector_error_model(decompose_errors=True).flattened()
 
 
 def logical_error_rate(
@@ -188,8 +183,14 @@ def main() -> None:
     Returns:
         None.
     """
+    physical_device_circuit = build_physical_device_circuit(
+        DISTANCE,
+        ROUNDS,
+        PHYSICAL_ERROR_RATE,
+    )
+
     # 1. Use the circuit-derived naive DEM directly as the initial DEM.
-    naive_dem = build_naive_dem()
+    naive_dem = build_dem(physical_device_circuit)
     initial_dem = naive_dem
     error_instructions = [
         instruction for instruction in initial_dem if instruction.type == "error"
