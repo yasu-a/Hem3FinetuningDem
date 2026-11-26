@@ -6,6 +6,7 @@ import stim
 
 from fdem.__main__ import (
     parse_arguments,
+    prior_change_summary,
     train_dem_with_cobyla,
     train_dem_with_gradient_descent,
     train_dem_with_pair_least_squares,
@@ -91,16 +92,17 @@ def test_training_callback_reports_combined_loss_components() -> None:
     )
     assert all(
         set(metrics) == {
-            "firing_rate_rmse",
-            "pair_correlation_rmse",
+            "single_rmse",
+            "pair_rmse",
+            "rmse",
             "loss",
         }
         for metrics in reported_metrics
     )
 
 
-def test_pair_least_squares_training_fits_observed_correlations() -> None:
-    """The direct trainer fits pair correlations and reports its single RMSE."""
+def test_pair_least_squares_training_reduces_unified_rmse() -> None:
+    """The direct trainer reduces unified RMSE and updates single mechanisms."""
     initial_dem = stim.DetectorErrorModel(
         """
         error(0.01) D0
@@ -111,8 +113,17 @@ def test_pair_least_squares_training_fits_observed_correlations() -> None:
         error(0.01) D1 D2 L0
         """
     )
-    patterns = [[0, 0, 0], [1, 1, 0], [1, 1, 1], [0, 0, 1]]
-    physical_syndromes = np.repeat(patterns, [105, 15, 7, 1], axis=0)
+    target_dem = stim.DetectorErrorModel(
+        """
+        error(0.08) D0
+        error(0.06) D1
+        error(0.04) D2 L0
+        error(0.12) D0 D1
+        error(0.07) D0 D2 L0
+        error(0.05) D1 D2 L0
+        """
+    )
+    physical_syndromes, _, _ = target_dem.compile_sampler(seed=5).sample(100_000)
     reported: list[tuple[int, dict[str, float]]] = []
 
     def record_result(
@@ -141,13 +152,27 @@ def test_pair_least_squares_training_fits_observed_correlations() -> None:
 
     observed = DetectorPairCorrelationStatistics().calculate(physical_syndromes)
     fitted = dem_pair_probabilities(fitted_dem)
-    np.testing.assert_allclose(fitted, observed, equal_nan=True, atol=1e-10)
-    assert loss_history == pytest.approx([0.0], abs=1e-10)
-    assert reported == [(1, {"loss": loss_history[0]})]
+    initial = dem_pair_probabilities(initial_dem)
+    statistics = DetectorPairCorrelationStatistics()
+    initial_loss = statistics.difference(observed, initial)
+    fitted_loss = statistics.difference(observed, fitted)
+    assert fitted_loss < initial_loss
+    assert fitted_dem[0].args_copy()[0] != pytest.approx(
+        initial_dem[0].args_copy()[0]
+    )
+    assert loss_history == pytest.approx([fitted_loss])
+    assert reported[0][0] == 1
+    assert reported[0][1]["loss"] == pytest.approx(loss_history[0])
+    assert set(reported[0][1]) == {
+        "single_rmse",
+        "pair_rmse",
+        "rmse",
+        "loss",
+    }
 
 
-def test_gradient_descent_reduces_pair_correlation_rmse() -> None:
-    """Analytic gradient descent lowers RMSE while retaining pair-invisible priors."""
+def test_gradient_descent_reduces_rmse_and_updates_single_prior() -> None:
+    """Analytic gradient descent lowers unified RMSE and updates a single prior."""
     initial_dem = stim.DetectorErrorModel(
         """
         error(0.03) D0 D1
@@ -175,6 +200,30 @@ def test_gradient_descent_reduces_pair_correlation_rmse() -> None:
 
     assert len(loss_history) == 50
     assert loss_history[-1] < loss_history[0]
-    assert fitted_dem[3].args_copy() == pytest.approx(
-        initial_dem[3].args_copy()
+    assert fitted_dem[3].args_copy()[0] > initial_dem[3].args_copy()[0]
+
+
+def test_prior_change_summary_groups_mechanisms_by_detector_support() -> None:
+    """Prior diagnostics count and compare zero-, single-, and multi-detector errors."""
+    initial = stim.DetectorErrorModel(
+        """
+        error(0.01) L0
+        error(0.02) D0
+        error(0.03) D0 D1
+        """
     )
+    optimized = stim.DetectorErrorModel(
+        """
+        error(0.01) L0
+        error(0.05) D0
+        error(0.07) D0 D1
+        """
+    )
+
+    summary = prior_change_summary(initial, optimized)
+
+    assert summary["zero_detector_count"] == 1
+    assert summary["single_detector_count"] == 1
+    assert summary["multiple_detector_count"] == 1
+    assert summary["single_prior_mean_absolute_change"] == pytest.approx(0.03)
+    assert summary["multiple_prior_mean_absolute_change"] == pytest.approx(0.04)

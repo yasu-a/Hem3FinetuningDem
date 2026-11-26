@@ -10,8 +10,12 @@ import stim
 from scipy.optimize import minimize
 from tqdm import tqdm
 
-from .dem import with_priors
-from .device import get_reference_dem, sample_physical_device_syndromes
+from .dem import detector_support, with_priors
+from .device import (
+    get_reference_dem,
+    logical_error_rate_from_physical_device_dem,
+    sample_physical_device_syndromes,
+)
 from .pij import (
     dem_pair_probabilities,
     fit_dem_from_pij,
@@ -28,6 +32,7 @@ OPTIMIZATION_STEPS = 10000
 LEARNING_RATE = 0.0001
 GRADIENT_LEARNING_RATE = 0.1
 REFERENCE_ERROR_PROBABILITY = 0.001
+PAIR_LOSS_WEIGHT = 1.0
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
 RESULTS_DIRECTORY = Path("var")
@@ -74,6 +79,57 @@ def logical_error_rate(
     decoder = pymatching.Matching.from_detector_error_model(dem)
     predictions = decoder.decode_batch(detectors)
     return float((predictions != observables).any(axis=1).mean())
+
+
+def prior_change_summary(
+    initial_dem: stim.DetectorErrorModel,
+    optimized_dem: stim.DetectorErrorModel,
+) -> dict[str, int | float]:
+    """Summarize mechanism counts and absolute prior changes by detector support.
+
+    Args:
+        initial_dem: DEM before optimization.
+        optimized_dem: DEM with the same error-mechanism structure after optimization.
+
+    Returns:
+        Counts for zero-, single-, and multiple-detector mechanisms and mean absolute
+        prior changes for the latter two visible groups.
+
+    Raises:
+        ValueError: If the two DEMs do not have matching error-mechanism structures.
+    """
+    initial_errors = [
+        instruction for instruction in initial_dem.flattened()
+        if instruction.type == "error"
+    ]
+    optimized_errors = [
+        instruction for instruction in optimized_dem.flattened()
+        if instruction.type == "error"
+    ]
+    if len(initial_errors) != len(optimized_errors):
+        raise ValueError("Initial and optimized DEM error counts must match")
+
+    changes: dict[int, list[float]] = {0: [], 1: [], 2: []}
+    for initial, optimized in zip(initial_errors, optimized_errors):
+        if initial.targets_copy() != optimized.targets_copy():
+            raise ValueError("Initial and optimized DEM error targets must match")
+        support_size = len(detector_support(initial))
+        group = min(support_size, 2)
+        changes[group].append(
+            abs(optimized.args_copy()[0] - initial.args_copy()[0])
+        )
+
+    return {
+        "zero_detector_count": len(changes[0]),
+        "single_detector_count": len(changes[1]),
+        "multiple_detector_count": len(changes[2]),
+        "single_prior_mean_absolute_change": (
+            float(np.mean(changes[1])) if changes[1] else 0.0
+        ),
+        "multiple_prior_mean_absolute_change": (
+            float(np.mean(changes[2])) if changes[2] else 0.0
+        ),
+    }
 
 
 def train_dem_with_cobyla(
@@ -160,40 +216,46 @@ def train_dem_with_cobyla(
 def train_dem_with_pair_least_squares(
     initial_dem: stim.DetectorErrorModel,
     physical_device_syndromes: np.ndarray,
+    pair_loss_weight: float = 1.0,
     callback: Callable[
         [int, dict[str, float], stim.DetectorErrorModel],
         None,
     ] | None = None,
 ) -> tuple[stim.DetectorErrorModel, list[float]]:
-    """Fit DEM probabilities directly from detector-pair correlations.
+    """Fit DEM probabilities directly from unified detector correlations.
 
     The fit converts independent error probabilities into additive parity log rates
-    and solves their detector-pair incidence equations with nonnegative bounded least
-    squares. Error mechanisms that do not contribute to any detector pair retain their
-    initial probabilities.
+    and solves firing-rate and detector-pair incidence equations with nonnegative
+    bounded least squares. Error mechanisms that flip no detectors retain their initial
+    probabilities.
 
     Args:
         initial_dem: Detector error model whose fixed structure will be fitted.
         physical_device_syndromes: Syndrome samples collected from the physical device,
             with shape ``(shots, detectors)``.
+        pair_loss_weight: Nonnegative weight applied to off-diagonal pair MSE.
         callback: Optional function called once with the fitted loss and DEM.
 
     Returns:
-        A tuple containing the fitted DEM and a one-element pair-correlation RMSE
-        history.
+        A tuple containing the fitted DEM and a one-element combined RMSE history.
 
     Raises:
         ValueError: If the syndrome statistics or DEM-supported pair equations are
             invalid.
         RuntimeError: If the bounded least-squares solver does not converge.
     """
-    statistics = DetectorPairCorrelationStatistics()
+    statistics = DetectorPairCorrelationStatistics(pair_loss_weight)
     observed_correlations = statistics.calculate(physical_device_syndromes)
-    fitted_dem = fit_dem_from_pij(initial_dem, observed_correlations)
+    fitted_dem = fit_dem_from_pij(
+        initial_dem,
+        observed_correlations,
+        pair_loss_weight,
+    )
     fitted_correlations = dem_pair_probabilities(fitted_dem)
-    loss = statistics.difference(observed_correlations, fitted_correlations)
+    metrics = statistics.metrics(observed_correlations, fitted_correlations)
+    loss = metrics["loss"]
     if callback is not None:
-        callback(1, {"loss": loss}, fitted_dem)
+        callback(1, metrics, fitted_dem)
     return fitted_dem, [loss]
 
 
@@ -203,6 +265,7 @@ def train_dem_with_gradient_descent(
     *,
     steps: int,
     learning_rate: float,
+    pair_loss_weight: float = 1.0,
     callback: Callable[
         [int, dict[str, float], stim.DetectorErrorModel],
         None,
@@ -211,9 +274,10 @@ def train_dem_with_gradient_descent(
     """Fit DEM probabilities using projected analytic gradient descent.
 
     The optimization variables are parity log rates. Each iteration evaluates the
-    exact DEM pair probabilities, differentiates their MSE analytically, and projects
-    updated log rates onto the nonnegative domain. Pair-invisible mechanisms have zero
-    gradient and retain their initial probabilities.
+    exact DEM firing and pair probabilities, differentiates their weighted MSE
+    analytically, and projects updated log rates onto the nonnegative domain.
+    Detector-invisible mechanisms have zero gradient and retain their initial
+    probabilities.
 
     Args:
         initial_dem: Detector error model whose fixed structure will be fitted.
@@ -221,10 +285,11 @@ def train_dem_with_gradient_descent(
             with shape ``(shots, detectors)``.
         steps: Number of loss and gradient evaluations.
         learning_rate: Positive gradient-descent step size in log-rate space.
+        pair_loss_weight: Nonnegative weight applied to off-diagonal pair MSE.
         callback: Optional function called after each evaluation with its RMSE and DEM.
 
     Returns:
-        A tuple containing the fitted DEM and the pair-correlation RMSE history.
+        A tuple containing the fitted DEM and the combined RMSE history.
 
     Raises:
         ValueError: If steps or the learning rate is invalid, an initial prior is at
@@ -249,7 +314,8 @@ def train_dem_with_gradient_descent(
     if np.any(initial_priors >= 0.5):
         raise ValueError("Gradient-descent DEM probabilities must be below 0.5")
 
-    observed_correlations = DetectorPairCorrelationStatistics().calculate(
+    statistics = DetectorPairCorrelationStatistics(pair_loss_weight)
+    observed_correlations = statistics.calculate(
         physical_device_syndromes
     )
     log_rates = -np.log1p(-2 * initial_priors)
@@ -262,11 +328,17 @@ def train_dem_with_gradient_descent(
         mse, gradient = pair_probability_mse_and_gradient(
             candidate_dem,
             observed_correlations,
+            pair_loss_weight,
         )
         rmse = float(np.sqrt(mse))
         loss_history.append(rmse)
         if callback is not None:
-            callback(evaluation, {"loss": rmse}, candidate_dem)
+            model_correlations = dem_pair_probabilities(candidate_dem)
+            metrics = statistics.metrics(
+                observed_correlations,
+                model_correlations,
+            )
+            callback(evaluation, metrics, candidate_dem)
         if evaluation < steps:
             log_rates = np.maximum(0.0, log_rates - learning_rate * gradient)
 
@@ -318,12 +390,22 @@ def main() -> None:
     error_instructions = [
         instruction for instruction in initial_dem if instruction.type == "error"
     ]
-    statistics_calculator = DetectorPairCorrelationStatistics()
+    statistics_calculator = DetectorPairCorrelationStatistics(PAIR_LOSS_WEIGHT)
     syndrome_correlations = statistics_calculator.calculate(syndrome_samples)
+    initial_metrics = statistics_calculator.metrics(
+        syndrome_correlations,
+        dem_pair_probabilities(initial_dem),
+    )
 
     # 3. Track LER using the fixed evaluation samples collected above.
     initial_ler = logical_error_rate(initial_dem, detector_samples, actual_observables)
+    physical_dem_ler = logical_error_rate_from_physical_device_dem(
+        arguments.experiment,
+        detector_samples,
+        actual_observables,
+    )
     ler_history: list[tuple[int, float]] = []
+    latest_ler: float | None = None
 
     progress_total = (
         1 if arguments.training_method == "pair-lsq" else OPTIMIZATION_STEPS
@@ -345,21 +427,24 @@ def main() -> None:
             Returns:
                 None.
             """
+            nonlocal latest_ler
+
             loss = metrics["loss"]
             if evaluation % LER_EVALUATION_INTERVAL == 0:
-                candidate_ler = logical_error_rate(
+                latest_ler = logical_error_rate(
                     candidate_dem,
                     detector_samples,
                     actual_observables,
                 )
-                ler_history.append((evaluation, candidate_ler))
+                ler_history.append((evaluation, latest_ler))
+            if latest_ler is None:
+                progress.set_postfix(loss=f"{loss:.3g}", refresh=False)
+            else:
                 progress.set_postfix(
                     loss=f"{loss:.3g}",
-                    ler=f"{candidate_ler:.3g}",
+                    ler=f"{latest_ler:.3g}",
                     refresh=False,
                 )
-            else:
-                progress.set_postfix(loss=f"{loss:.3g}", refresh=False)
             progress.update(evaluation - progress.n)
 
         if arguments.training_method == "cobyla":
@@ -377,6 +462,7 @@ def main() -> None:
             optimized_dem, loss_history = train_dem_with_pair_least_squares(
                 initial_dem,
                 syndrome_samples,
+                PAIR_LOSS_WEIGHT,
                 callback=update_progress,
             )
         else:
@@ -385,16 +471,23 @@ def main() -> None:
                 syndrome_samples,
                 steps=OPTIMIZATION_STEPS,
                 learning_rate=GRADIENT_LEARNING_RATE,
+                pair_loss_weight=PAIR_LOSS_WEIGHT,
                 callback=update_progress,
             )
 
     # 4. Evaluate the optimized decoder on the same fixed data.
     optimized_ler = logical_error_rate(optimized_dem, detector_samples, actual_observables)
+    optimized_metrics = statistics_calculator.metrics(
+        syndrome_correlations,
+        dem_pair_probabilities(optimized_dem),
+    )
+    prior_summary = prior_change_summary(initial_dem, optimized_dem)
     save_loss_plot(loss_history, loss_plot_path)
     save_ler_plot(
         ler_history,
         initial_ler,
         optimized_ler,
+        physical_dem_ler,
         len(loss_history),
         ler_plot_path,
     )
@@ -402,11 +495,35 @@ def main() -> None:
     print(f"DEM error instructions = {len(error_instructions)}")
     print(f"first initial error = {error_instructions[0]}")
     print(f"syndrome samples = {syndrome_samples.shape}")
-    print(f"mean pair correlation = {np.nanmean(syndrome_correlations):.6g}")
-    print(f"initial RMSE = {loss_history[0]:.8g}")
+    pair_rows, pair_columns = np.triu_indices(syndrome_correlations.shape[0], k=1)
+    print(
+        "mean pair correlation = "
+        f"{np.nanmean(syndrome_correlations[pair_rows, pair_columns]):.6g}"
+    )
+    print(f"initial single RMSE = {initial_metrics['single_rmse']:.8g}")
+    print(f"optimized single RMSE = {optimized_metrics['single_rmse']:.8g}")
+    print(f"initial pair RMSE = {initial_metrics['pair_rmse']:.8g}")
+    print(f"optimized pair RMSE = {optimized_metrics['pair_rmse']:.8g}")
+    print(f"initial RMSE = {initial_metrics['rmse']:.8g}")
+    print(f"optimized RMSE = {optimized_metrics['rmse']:.8g}")
     print(f"best RMSE = {min(loss_history):.8g}")
     print(f"initial LER = {initial_ler:.6g}")
     print(f"optimized LER = {optimized_ler:.6g}")
+    print(f"physical-device DEM LER = {physical_dem_ler:.6g}")
+    print(f"single-detector error mechanisms = {prior_summary['single_detector_count']}")
+    print(
+        "multiple-detector error mechanisms = "
+        f"{prior_summary['multiple_detector_count']}"
+    )
+    print(f"zero-detector error mechanisms = {prior_summary['zero_detector_count']}")
+    print(
+        "single-detector prior mean absolute change = "
+        f"{prior_summary['single_prior_mean_absolute_change']:.8g}"
+    )
+    print(
+        "multiple-detector prior mean absolute change = "
+        f"{prior_summary['multiple_prior_mean_absolute_change']:.8g}"
+    )
     print(f"loss plot = {loss_plot_path}")
     print(f"LER plot = {ler_plot_path}")
 

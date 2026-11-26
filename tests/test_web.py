@@ -80,7 +80,8 @@ def test_workbench_returns_correlation_and_circuit(
     assert count == 24
     matrix = result["matrix"]
     assert len(matrix) == count
-    assert all(len(row) == count and row[index] is None for index, row in enumerate(matrix))
+    assert all(len(row) == count for row in matrix)
+    assert all(0 <= matrix[index][index] <= 1 for index in range(count))
     assert all(matrix[i][j] == matrix[j][i] for i in range(count) for j in range(i))
     assert len(result["checks"]) == 8
     assert stim.Circuit(result["stim"]).num_detectors == count

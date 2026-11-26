@@ -8,8 +8,8 @@ The device module exposes sampled detector events and a reference DEM. To build 
 reference, it removes all noise from the experiment circuit, adds uniform gate, reset,
 and measurement noise, and asks Stim to derive the DEM. This uses the QEC circuit
 structure without using the physical device's noise model. The training program then
-optimizes the reference DEM probabilities against the RMSE of the sampled pair
-correlations.
+optimizes the reference DEM probabilities against detector firing rates and sampled
+pair correlations.
 
 Place each exported circuit in a directory named after the experiment. The circuit
 must use the fixed filename `circuit.stim`.
@@ -28,9 +28,11 @@ python -m pip install -e .
 python -m fdem --experiment d3-r3-default
 ```
 
-The default `cobyla` method repeatedly samples the candidate DEM and minimizes the
-pair-correlation RMSE. To fit the pair probabilities directly with bounded linear
-least squares in parity log-rate space, select `pair-lsq`:
+The loss independently normalizes detector firing-rate MSE and off-diagonal
+pair-correlation MSE, then adds them with a configurable pair weight. The default
+`cobyla` method repeatedly samples the candidate DEM and minimizes the resulting
+combined RMSE. To fit the same diagonal and off-diagonal statistics directly with
+bounded linear least squares in parity log-rate space, select `pair-lsq`:
 
 ```console
 python -m fdem --experiment d3-r3-default --training-method pair-lsq
@@ -43,9 +45,9 @@ gradient, select `gradient-descent`:
 python -m fdem --experiment d3-r3-default --training-method gradient-descent
 ```
 
-All methods start from the same uniformly noisy reference DEM. The direct pair fit and
-gradient descent do not update single-detector mechanisms because they do not appear
-in detector-pair statistics.
+All methods start from the same uniformly noisy reference DEM. Detector firing rates
+occupy the diagonal of the correlation matrix, allowing the direct fit and gradient
+descent to update single-detector mechanisms as well as pair-visible mechanisms.
 
 The generated figures are grouped by training method. For example, the default method
 saves them as `var/d3-r3-default/cobyla/loss.png` and

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import numpy as np
+import pymatching
 import stim
 
 
@@ -207,6 +208,69 @@ def get_reference_dem(
     return reference_circuit.detector_error_model(
         decompose_errors=True
     ).flattened()
+
+
+def logical_error_rate_from_physical_device_dem(
+    experiment_name: str,
+    detectors: np.ndarray,
+    observables: np.ndarray,
+    *,
+    experiments_directory: Path = Path("experiments"),
+) -> float:
+    """Calculate LER using a DEM derived directly from the physical-device circuit.
+
+    This comparison DEM retains the physical circuit's noise model and is not used as
+    the training reference DEM. Mutually exclusive ``PAULI_CHANNEL_2`` branches require
+    Stim's disjoint-error approximation; its threshold is limited to the largest total
+    channel probability present in the circuit.
+
+    Args:
+        experiment_name: Name of one direct child of the experiments directory.
+        detectors: Evaluation detection events with shape ``(shots, detectors)``.
+        observables: Actual logical flips with shape ``(shots, observables)``.
+        experiments_directory: Root directory containing experiment directories.
+
+    Returns:
+        The fraction of evaluation shots decoded with an incorrect observable.
+
+    Raises:
+        ValueError: If sample dimensions do not match the physical circuit or if DEM
+            conversion or decoding fails.
+        FileNotFoundError: If the experiment circuit does not exist.
+    """
+    physical_circuit = _load_physical_device_circuit(
+        experiment_name,
+        experiments_directory,
+    )
+    if detectors.ndim != 2 or detectors.shape[1] != physical_circuit.num_detectors:
+        raise ValueError("Detector samples must match the physical circuit")
+    if observables.ndim != 2 or observables.shape != (
+        detectors.shape[0],
+        physical_circuit.num_observables,
+    ):
+        raise ValueError("Observable samples must match the physical circuit and shots")
+
+    channel_probabilities = [
+        sum(instruction.gate_args_copy())
+        for instruction in physical_circuit.flattened()
+        if instruction.name == "PAULI_CHANNEL_2"
+    ]
+    if channel_probabilities:
+        physical_dem = physical_circuit.detector_error_model(
+            decompose_errors=True,
+            approximate_disjoint_errors=np.nextafter(
+                max(channel_probabilities),
+                np.inf,
+            ),
+        ).flattened()
+    else:
+        physical_dem = physical_circuit.detector_error_model(
+            decompose_errors=True,
+        ).flattened()
+
+    decoder = pymatching.Matching.from_detector_error_model(physical_dem)
+    predictions = decoder.decode_batch(detectors)
+    return float((predictions != observables).any(axis=1).mean())
 
 
 def sample_physical_device_syndromes(

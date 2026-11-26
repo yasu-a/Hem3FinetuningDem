@@ -1,4 +1,4 @@
-"""Fit the probabilities of a reference DEM to device detector-pair statistics."""
+"""Fit reference DEM probabilities to detector firing and pair statistics."""
 
 import argparse
 from itertools import combinations
@@ -12,22 +12,24 @@ import stim
 from .correlations import detector_pair_correlations
 from .dem import detector_support, with_priors
 from .device import sample_physical_device_syndromes
+from .statistics import correlation_matrix_metrics
 
 
 def _pair_design(
     dem: stim.DetectorErrorModel,
 ) -> tuple[np.ndarray, csr_matrix, np.ndarray]:
-    """Build the pair-to-mechanism incidence matrix for a flattened DEM.
+    """Build the correlation-entry incidence matrix for a flattened DEM.
 
     Args:
         dem: Flattened Stim detector error model.
 
     Returns:
-        Detector pairs in row order, the sparse incidence matrix, and the baseline
-        probabilities in column order. Each column represents one error instruction.
-        Only detector pairs present in the DEM occupy rows in the matrix.
+        Matrix entries ``(i, j)`` in row order, the sparse incidence matrix, and the
+        baseline probabilities in column order. Diagonal entries represent individual
+        detector firing, and off-diagonal entries represent detector pairs. Each
+        column represents one error instruction.
     """
-    pair_rows: dict[tuple[int, int], int] = {}
+    entry_rows: dict[tuple[int, int], int] = {}
     probabilities = []
     rows = []
     columns = []
@@ -36,23 +38,26 @@ def _pair_design(
             continue
         column = len(probabilities)
         probabilities.append(instruction.args_copy()[0])
-        for pair in combinations(detector_support(instruction), 2):
-            rows.append(pair_rows.setdefault(pair, len(pair_rows)))
+        detectors = detector_support(instruction)
+        entries = [(detector, detector) for detector in detectors]
+        entries.extend(combinations(detectors, 2))
+        for entry in entries:
+            rows.append(entry_rows.setdefault(entry, len(entry_rows)))
             columns.append(column)
 
     design = csr_matrix(
         (np.ones(len(rows)), (rows, columns)),
-        shape=(len(pair_rows), len(probabilities)),
+        shape=(len(entry_rows), len(probabilities)),
     )
-    pairs = np.array(list(pair_rows), dtype=np.intp).reshape(-1, 2)
-    return pairs, design, np.array(probabilities)
+    matrix_entries = np.array(list(entry_rows), dtype=np.intp).reshape(-1, 2)
+    return matrix_entries, design, np.array(probabilities)
 
 
 def _log_rates(probabilities: np.ndarray) -> np.ndarray:
     """Convert DEM probabilities to nonnegative log rates.
 
     Args:
-        probabilities: Valid Stim error probabilities for pair-visible mechanisms.
+        probabilities: Valid Stim error probabilities for detector-visible mechanisms.
 
     Returns:
         Log rates in the same order as the probabilities.
@@ -61,143 +66,224 @@ def _log_rates(probabilities: np.ndarray) -> np.ndarray:
         ValueError: If a probability is at least 0.5.
     """
     if np.any(probabilities >= 0.5):
-        raise ValueError("Pair-visible DEM probabilities must be below 0.5")
+        raise ValueError("Detector-visible DEM probabilities must be below 0.5")
     return -np.log1p(-2 * probabilities)
 
 
 def dem_pair_probabilities(dem: stim.DetectorErrorModel) -> np.ndarray:
-    """Calculate the exact pair probabilities of a DEM, including hyperedges.
+    """Calculate exact detector firing and pair probabilities of a DEM.
 
     Args:
         dem: Stim model whose independent mechanisms contribute to every pair of
             detectors they flip together.
 
     Returns:
-        A symmetric matrix in Stim detector order with NaN on the diagonal. An
-        off-diagonal entry is the probability of an odd number of shared mechanisms.
+        A symmetric matrix in Stim detector order. A diagonal entry is the probability
+        of an odd number of mechanisms flipping that detector. An off-diagonal entry
+        is the probability of an odd number of shared mechanisms.
 
     Raises:
-        ValueError: If a mechanism with two or more detectors has probability at least 0.5.
+        ValueError: If a detector-visible mechanism has probability at least 0.5.
     """
-    pairs, design, probabilities = _pair_design(dem.flattened())
+    entries, design, probabilities = _pair_design(dem.flattened())
     visible = design.getnnz(axis=0) > 0
-    pair_rates = design[:, visible] @ _log_rates(probabilities[visible])
-    pair_probabilities = np.zeros((dem.num_detectors, dem.num_detectors))
-    left, right = pairs.T
-    pair_probabilities[left, right] = pair_probabilities[right, left] = (
-        -np.expm1(-pair_rates) / 2
-    )
-    np.fill_diagonal(pair_probabilities, np.nan)
-    return pair_probabilities
+    entry_rates = design[:, visible] @ _log_rates(probabilities[visible])
+    probabilities_matrix = np.zeros((dem.num_detectors, dem.num_detectors))
+    left, right = entries.T
+    entry_probabilities = -np.expm1(-entry_rates) / 2
+    probabilities_matrix[left, right] = entry_probabilities
+    probabilities_matrix[right, left] = entry_probabilities
+    return probabilities_matrix
+
+
+def _validate_pair_loss_weight(pair_loss_weight: float) -> float:
+    """Validate and normalize the pair-loss weight.
+
+    Args:
+        pair_loss_weight: Candidate multiplier for off-diagonal pair MSE.
+
+    Returns:
+        The validated weight as a float.
+
+    Raises:
+        ValueError: If the weight is negative or not finite.
+    """
+    if not np.isfinite(pair_loss_weight) or pair_loss_weight < 0:
+        raise ValueError("Pair loss weight must be finite and nonnegative")
+    return float(pair_loss_weight)
+
+
+def _entry_predictions(
+    design: csr_matrix,
+    probabilities: np.ndarray,
+) -> np.ndarray:
+    """Calculate probabilities for the entries represented by a design matrix.
+
+    Args:
+        design: Correlation-entry to error-mechanism incidence matrix.
+        probabilities: DEM error probabilities in design-column order.
+
+    Returns:
+        Predicted odd-parity probabilities in design-row order.
+    """
+    visible = design.getnnz(axis=0) > 0
+    entry_rates = design[:, visible] @ _log_rates(probabilities[visible])
+    return -np.expm1(-entry_rates) / 2
+
+
+def _matrix_from_entries(
+    detector_count: int,
+    entries: np.ndarray,
+    entry_probabilities: np.ndarray,
+) -> np.ndarray:
+    """Expand correlation-entry probabilities into a symmetric matrix.
+
+    Args:
+        detector_count: Size of the square output matrix.
+        entries: Matrix indices in probability order.
+        entry_probabilities: Probabilities corresponding to ``entries``.
+
+    Returns:
+        A symmetric detector-correlation matrix with zero for absent entries.
+    """
+    matrix = np.zeros((detector_count, detector_count))
+    left, right = entries.T
+    matrix[left, right] = entry_probabilities
+    matrix[right, left] = entry_probabilities
+    return matrix
 
 
 def pair_probability_mse_and_gradient(
     dem: stim.DetectorErrorModel,
     observed_pij: np.ndarray,
+    pair_loss_weight: float = 1.0,
 ) -> tuple[float, np.ndarray]:
-    """Calculate pair-probability MSE and its analytic log-rate gradient.
+    """Calculate unified correlation loss and its analytic log-rate gradient.
 
     The gradient is taken with respect to one parity log rate
     ``-log(1 - 2p)`` per flattened DEM error instruction. Detector pairs absent from
-    the DEM contribute a constant residual to the MSE but no gradient.
+    the DEM contribute a constant residual to the loss but no gradient. Diagonal and
+    off-diagonal MSE values are independently normalized before weighting.
 
     Args:
         dem: Detector error model supplying the predicted pair probabilities.
         observed_pij: Square observed pair-probability matrix. The finite entries in
-            its upper triangle define the MSE.
+            its diagonal and upper triangle define the loss.
+        pair_loss_weight: Nonnegative multiplier for off-diagonal pair MSE.
 
     Returns:
-        The pair-probability MSE and its gradient in flattened error-instruction order.
+        ``single_mse + pair_loss_weight * pair_mse`` and its gradient in flattened
+        error-instruction order.
 
     Raises:
-        ValueError: If the matrix shape is invalid, no finite pair is available, no
-            DEM-supported pair is finite, or a pair-visible probability is at least
-            0.5.
+        ValueError: If the matrix shape or weight is invalid, either component has no
+            finite entry, or a detector-visible probability is at least 0.5.
     """
     if observed_pij.shape != (dem.num_detectors, dem.num_detectors):
         raise ValueError("Pair matrix shape must match the number of DEM detectors")
 
+    weight = _validate_pair_loss_weight(pair_loss_weight)
     flattened = dem.flattened()
-    pairs, design, probabilities = _pair_design(flattened)
-    visible = design.getnnz(axis=0) > 0
-    pair_rates = design[:, visible] @ _log_rates(probabilities[visible])
-    supported_predictions = -np.expm1(-pair_rates) / 2
-
-    rows, columns = np.triu_indices(dem.num_detectors, k=1)
-    observed = observed_pij[rows, columns]
-    finite = np.isfinite(observed)
-    if not finite.any():
-        raise ValueError("No detector pair has a finite observed probability")
-
-    predictions = np.zeros_like(observed, dtype=float)
-    pair_indices = {
-        (int(left), int(right)): index
-        for index, (left, right) in enumerate(zip(rows, columns))
-    }
-    supported_indices = np.array(
-        [pair_indices[tuple(pair)] for pair in pairs],
-        dtype=np.intp,
+    entries, design, probabilities = _pair_design(flattened)
+    entry_predictions = _entry_predictions(design, probabilities)
+    model_pij = _matrix_from_entries(
+        dem.num_detectors,
+        entries,
+        entry_predictions,
     )
-    predictions[supported_indices] = supported_predictions
-    residual = predictions[finite] - observed[finite]
-    mse = float(np.mean(residual**2))
+    metrics = correlation_matrix_metrics(observed_pij, model_pij, weight)
+    loss = metrics["rmse"] ** 2
 
-    supported_observed = observed_pij[tuple(pairs.T)]
-    usable = np.isfinite(supported_observed)
-    if not usable.any():
-        raise ValueError("No DEM-supported detector pair has a finite estimate")
-    supported_residual = supported_predictions[usable] - supported_observed[usable]
-    supported_slope = 0.5 - supported_predictions[usable]
-    gradient = np.asarray(
-        2
-        / finite.sum()
-        * design[usable].T
-        @ (supported_residual * supported_slope)
-    ).reshape(-1)
-    return mse, gradient
+    diagonal_observed = np.diag(observed_pij)
+    diagonal_finite_count = np.isfinite(diagonal_observed).sum()
+    pair_rows, pair_columns = np.triu_indices(dem.num_detectors, k=1)
+    pair_finite_count = np.isfinite(observed_pij[pair_rows, pair_columns]).sum()
+
+    entry_observed = observed_pij[tuple(entries.T)]
+    finite = np.isfinite(entry_observed)
+    diagonal = entries[:, 0] == entries[:, 1]
+    residual_slope = (
+        (entry_predictions - entry_observed) * (0.5 - entry_predictions)
+    )
+    single_rows = finite & diagonal
+    pair_rows_mask = finite & ~diagonal
+    gradient = np.zeros(probabilities.shape)
+    if single_rows.any():
+        gradient += np.asarray(
+            2
+            / diagonal_finite_count
+            * design[single_rows].T
+            @ residual_slope[single_rows]
+        ).reshape(-1)
+    if pair_rows_mask.any() and weight > 0:
+        gradient += np.asarray(
+            2
+            * weight
+            / pair_finite_count
+            * design[pair_rows_mask].T
+            @ residual_slope[pair_rows_mask]
+        ).reshape(-1)
+    return loss, gradient
 
 
 def fit_dem_from_pij(
     baseline: stim.DetectorErrorModel,
     observed_pij: np.ndarray,
+    pair_loss_weight: float = 1.0,
 ) -> stim.DetectorErrorModel:
-    """Fit the baseline DEM by nonnegative least squares in pair log-rate space.
+    """Fit a DEM by weighted nonnegative least squares in correlation log-rate space.
 
     Args:
         baseline: Noise model to fit, with detector IDs matching the device data.
         observed_pij: Square pair matrix from ``detector_pair_correlations``.
-            Only the upper triangle is used. Signed estimates are retained, and
-            nonfinite entries and entries at or above 0.5 are omitted.
+            The diagonal and upper triangle are used. Signed estimates are retained,
+            and nonfinite entries and entries at or above 0.5 are omitted.
+        pair_loss_weight: Nonnegative multiplier for off-diagonal pair equations.
 
     Returns:
         A flattened fitted DEM. Mechanisms absent from the usable pair equations
         retain their baseline probabilities.
 
     Raises:
-        ValueError: If detector counts differ, there are no usable DEM-supported
-            pairs, or a fitted mechanism has a baseline probability at least 0.5.
+        ValueError: If detector counts or the weight are invalid, required equations
+            are unavailable, or a fitted mechanism has probability at least 0.5.
         RuntimeError: If the least-squares solver does not converge.
     """
     if observed_pij.shape != (baseline.num_detectors, baseline.num_detectors):
         raise ValueError("Pair matrix shape must match the number of DEM detectors")
 
+    weight = _validate_pair_loss_weight(pair_loss_weight)
     flattened = baseline.flattened()
-    pairs, design, probabilities = _pair_design(flattened)
-    observed = observed_pij[tuple(pairs.T)]
+    entries, design, probabilities = _pair_design(flattened)
+    observed = observed_pij[tuple(entries.T)]
     usable = np.isfinite(observed) & (observed < 0.5)
-    if not np.any(usable):
-        raise ValueError("No DEM-supported detector pairs have finite estimates below 0.5")
+    diagonal = entries[:, 0] == entries[:, 1]
+    single_count = np.count_nonzero(usable & diagonal)
+    pair_count = np.count_nonzero(usable & ~diagonal)
+    if single_count == 0:
+        raise ValueError("No DEM-supported detector has a finite firing estimate")
+    if weight > 0 and pair_count == 0:
+        raise ValueError("No DEM-supported detector pair has a finite estimate")
 
-    design = design[usable]
-    fitted = design.getnnz(axis=0) > 0
-    design = design[:, fitted]
+    selected = usable & (diagonal | (weight > 0))
+    pair_row_weight = 0.0 if pair_count == 0 else np.sqrt(weight / pair_count)
+    row_weights = np.where(
+        diagonal[selected],
+        np.sqrt(1 / single_count),
+        pair_row_weight,
+    )
+    selected_design = design[selected]
+    weighted_design = selected_design.multiply(row_weights[:, None]).tocsr()
+    fitted = weighted_design.getnnz(axis=0) > 0
+    weighted_design = weighted_design[:, fitted]
     prior = _log_rates(probabilities[fitted])
-    target = -np.log1p(-2 * observed[usable])
+    target = -np.log1p(-2 * observed[selected])
+    weighted_target = row_weights * (target - selected_design[:, fitted] @ prior)
 
     # Solve for the change from the baseline with the equivalent constraint x >= 0.
     result = lsq_linear(
-        design,
-        target - design @ prior,
+        weighted_design,
+        weighted_target,
         bounds=(-prior, np.inf),
         tol=1e-12,
     )

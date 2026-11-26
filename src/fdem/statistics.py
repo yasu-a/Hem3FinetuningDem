@@ -109,7 +109,25 @@ class DetectorFiringRateStatistics(ISyndromeStatistics):
 
 
 class DetectorPairCorrelationStatistics(ISyndromeStatistics):
-    """Calculate signed pair-error probabilities between detectors."""
+    """Calculate detector firing rates and signed pair-error probabilities."""
+
+    def __init__(self, pair_loss_weight: float = 1.0) -> None:
+        """Initialize the unified detector-correlation statistics.
+
+        Args:
+            pair_loss_weight: Nonnegative weight applied to off-diagonal pair MSE.
+
+        Raises:
+            ValueError: If the pair loss weight is negative or not finite.
+        """
+        if not np.isfinite(pair_loss_weight) or pair_loss_weight < 0:
+            raise ValueError("Pair loss weight must be finite and nonnegative")
+        self._pair_loss_weight = float(pair_loss_weight)
+
+    @property
+    def pair_loss_weight(self) -> float:
+        """Return the weight applied to off-diagonal pair MSE."""
+        return self._pair_loss_weight
 
     def calculate(self, syndromes: np.ndarray) -> np.ndarray:
         """Calculate the detector pair-correlation matrix.
@@ -119,7 +137,8 @@ class DetectorPairCorrelationStatistics(ISyndromeStatistics):
 
         Returns:
             A symmetric matrix with shape ``(detectors, detectors)``. Its diagonal
-            and statistically undefined entries are ``NaN``.
+            contains detector firing probabilities, and statistically undefined
+            off-diagonal entries are ``NaN``.
 
         Raises:
             ValueError: If syndromes is invalid or contains fewer than two detectors.
@@ -131,7 +150,7 @@ class DetectorPairCorrelationStatistics(ISyndromeStatistics):
         target_statistics: np.ndarray,
         model_statistics: np.ndarray,
     ) -> float:
-        """Calculate RMSE between finite detector pair correlations.
+        """Calculate combined RMSE over detector firing and pair statistics.
 
         Each detector pair is included once using the upper triangle. A pair is
         compared only when its correlation estimate is finite in both matrices.
@@ -141,30 +160,41 @@ class DetectorPairCorrelationStatistics(ISyndromeStatistics):
             model_statistics: Correlation matrix from model syndromes.
 
         Returns:
-            Root mean squared error over valid distinct detector pairs.
+            ``sqrt(single_mse + pair_loss_weight * pair_mse)``.
 
         Raises:
             ValueError: If the inputs are not same-shaped square matrices or no
                 detector pair has a finite estimate in both matrices.
         """
-        if target_statistics.ndim != 2 or model_statistics.ndim != 2:
-            raise ValueError("Correlation statistics must be two-dimensional arrays")
-        if target_statistics.shape != model_statistics.shape:
-            raise ValueError("Target and model statistics must have the same shape")
-        if target_statistics.shape[0] != target_statistics.shape[1]:
-            raise ValueError("Correlation statistics must be square matrices")
+        return self.metrics(target_statistics, model_statistics)["loss"]
 
-        rows, columns = np.triu_indices(target_statistics.shape[0], k=1)
-        target_pairs = target_statistics[rows, columns]
-        model_pairs = model_statistics[rows, columns]
-        valid = np.isfinite(target_pairs) & np.isfinite(model_pairs)
-        if not valid.any():
-            raise ValueError("No detector pair has finite target and model statistics")
-        return float(np.sqrt(np.mean((model_pairs[valid] - target_pairs[valid]) ** 2)))
+    def metrics(
+        self,
+        target_statistics: np.ndarray,
+        model_statistics: np.ndarray,
+    ) -> dict[str, float]:
+        """Calculate separately normalized single and pair RMSE values.
+
+        Args:
+            target_statistics: Unified correlation matrix from physical syndromes.
+            model_statistics: Unified correlation matrix from model syndromes.
+
+        Returns:
+            Single-detector RMSE, pair-correlation RMSE, combined RMSE, and loss.
+
+        Raises:
+            ValueError: If the matrices are invalid or either component has no jointly
+                finite entry.
+        """
+        return correlation_matrix_metrics(
+            target_statistics,
+            model_statistics,
+            self._pair_loss_weight,
+        )
 
 
-class DetectorCombinedStatistics(ISyndromeStatistics):
-    """Combine detector firing rates and pair correlations in one loss."""
+class DetectorCombinedStatistics(DetectorPairCorrelationStatistics):
+    """Backward-compatible name for unified detector-correlation statistics."""
 
     def __init__(self, correlation_weight: float = 1.0) -> None:
         """Initialize the combined detector statistics.
@@ -177,109 +207,63 @@ class DetectorCombinedStatistics(ISyndromeStatistics):
         """
         if not np.isfinite(correlation_weight) or correlation_weight < 0:
             raise ValueError("Correlation weight must be finite and nonnegative")
-        self._correlation_weight = float(correlation_weight)
-        self._firing_rate_statistics = DetectorFiringRateStatistics()
-        self._pair_correlation_statistics = DetectorPairCorrelationStatistics()
+        super().__init__(pair_loss_weight=correlation_weight)
 
     @property
     def correlation_weight(self) -> float:
         """Return the weight applied to pair-correlation MSE."""
-        return self._correlation_weight
+        return self.pair_loss_weight
 
-    def calculate(
-        self,
-        syndromes: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Calculate detector firing rates and pair correlations.
 
-        Args:
-            syndromes: Detection-event samples with shape ``(shots, detectors)``.
+def correlation_matrix_metrics(
+    target_statistics: np.ndarray,
+    model_statistics: np.ndarray,
+    pair_loss_weight: float,
+) -> dict[str, float]:
+    """Calculate unified loss metrics from two detector-correlation matrices.
 
-        Returns:
-            A tuple containing detector firing rates and the pair-correlation matrix.
+    Args:
+        target_statistics: Matrix with firing rates on its diagonal.
+        model_statistics: Matrix with firing rates on its diagonal.
+        pair_loss_weight: Nonnegative multiplier for off-diagonal pair MSE.
 
-        Raises:
-            ValueError: If syndromes is invalid for either component statistic.
-        """
-        return (
-            self._firing_rate_statistics.calculate(syndromes),
-            self._pair_correlation_statistics.calculate(syndromes),
-        )
+    Returns:
+        Single-detector RMSE, pair-correlation RMSE, combined RMSE, and loss.
 
-    def difference(
-        self,
-        target_statistics: StatisticsValue,
-        model_statistics: StatisticsValue,
-    ) -> float:
-        """Calculate the combined firing-rate and pair-correlation loss.
+    Raises:
+        ValueError: If the matrices, weight, or finite component sets are invalid.
+    """
+    if not np.isfinite(pair_loss_weight) or pair_loss_weight < 0:
+        raise ValueError("Pair loss weight must be finite and nonnegative")
+    if target_statistics.ndim != 2 or model_statistics.ndim != 2:
+        raise ValueError("Correlation statistics must be two-dimensional arrays")
+    if target_statistics.shape != model_statistics.shape:
+        raise ValueError("Target and model statistics must have the same shape")
+    if target_statistics.shape[0] != target_statistics.shape[1]:
+        raise ValueError("Correlation statistics must be square matrices")
 
-        Args:
-            target_statistics: Firing rates and correlations from physical syndromes.
-            model_statistics: Firing rates and correlations from model syndromes.
+    target_single = np.diag(target_statistics)
+    model_single = np.diag(model_statistics)
+    valid_single = np.isfinite(target_single) & np.isfinite(model_single)
+    if not valid_single.any():
+        raise ValueError("No detector has finite target and model firing rates")
+    single_mse = np.mean(
+        (model_single[valid_single] - target_single[valid_single]) ** 2
+    )
 
-        Returns:
-            ``sqrt(firing_rate_mse + correlation_weight * correlation_mse)``.
-
-        Raises:
-            ValueError: If either combined statistics value is invalid.
-        """
-        return self.metrics(target_statistics, model_statistics)["loss"]
-
-    def metrics(
-        self,
-        target_statistics: StatisticsValue,
-        model_statistics: StatisticsValue,
-    ) -> dict[str, float]:
-        """Calculate component RMSE values and the combined loss.
-
-        Args:
-            target_statistics: Firing rates and correlations from physical syndromes.
-            model_statistics: Firing rates and correlations from model syndromes.
-
-        Returns:
-            Firing-rate RMSE, pair-correlation RMSE, and combined loss.
-
-        Raises:
-            ValueError: If either value is not a two-array tuple or its component
-                statistics are invalid.
-        """
-        target_firing, target_correlations = self._split(target_statistics)
-        model_firing, model_correlations = self._split(model_statistics)
-        firing_rate_mse = self._firing_rate_statistics.difference(
-            target_firing,
-            model_firing,
-        )
-        pair_correlation_rmse = self._pair_correlation_statistics.difference(
-            target_correlations,
-            model_correlations,
-        )
-        loss = np.sqrt(
-            firing_rate_mse
-            + self._correlation_weight * pair_correlation_rmse**2
-        )
-        return {
-            "firing_rate_rmse": float(np.sqrt(firing_rate_mse)),
-            "pair_correlation_rmse": pair_correlation_rmse,
-            "loss": float(loss),
-        }
-
-    @staticmethod
-    def _split(statistics: StatisticsValue) -> tuple[np.ndarray, np.ndarray]:
-        """Validate and unpack one combined statistics value.
-
-        Args:
-            statistics: Value returned by ``calculate``.
-
-        Returns:
-            Detector firing rates and pair correlations.
-
-        Raises:
-            ValueError: If the value is not a two-array tuple.
-        """
-        if (
-            not isinstance(statistics, tuple)
-            or len(statistics) != 2
-            or not all(isinstance(value, np.ndarray) for value in statistics)
-        ):
-            raise ValueError("Combined statistics must be a tuple of two arrays")
-        return statistics
+    rows, columns = np.triu_indices(target_statistics.shape[0], k=1)
+    target_pairs = target_statistics[rows, columns]
+    model_pairs = model_statistics[rows, columns]
+    valid_pairs = np.isfinite(target_pairs) & np.isfinite(model_pairs)
+    if not valid_pairs.any():
+        raise ValueError("No detector pair has finite target and model statistics")
+    pair_mse = np.mean(
+        (model_pairs[valid_pairs] - target_pairs[valid_pairs]) ** 2
+    )
+    rmse = float(np.sqrt(single_mse + pair_loss_weight * pair_mse))
+    return {
+        "single_rmse": float(np.sqrt(single_mse)),
+        "pair_rmse": float(np.sqrt(pair_mse)),
+        "rmse": rmse,
+        "loss": rmse,
+    }

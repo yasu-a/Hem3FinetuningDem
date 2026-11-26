@@ -15,7 +15,7 @@ def save_loss_plot(
     """Save the optimization RMSE history.
 
     Args:
-        loss_history: Pair-correlation RMSE from each objective evaluation.
+        loss_history: Combined detector-correlation RMSE from each evaluation.
         output_path: Output path for the generated figure.
 
     Returns:
@@ -31,7 +31,7 @@ def save_loss_plot(
     figure, axes = plt.subplots(figsize=(3.2, 2.8))
     evaluations = range(1, len(loss_history) + 1)
     axes.plot(evaluations, loss_history)
-    axes.set_title("Pair-correlation RMSE", fontsize=12)
+    axes.set_title("Detector-correlation RMSE", fontsize=12)
     axes.set_xlabel("Objective Evaluation", fontsize=11)
     axes.set_ylabel("RMSE", fontsize=11)
     axes.tick_params(labelsize=10)
@@ -45,6 +45,7 @@ def save_ler_plot(
     ler_history: list[tuple[int, float]],
     initial_ler: float,
     optimized_ler: float,
+    baseline_ler: float,
     final_evaluation: int,
     output_path: Path,
 ) -> None:
@@ -55,6 +56,7 @@ def save_ler_plot(
             values.
         initial_ler: Logical error rate at evaluation zero, before optimization.
         optimized_ler: Logical error rate of the DEM returned by the optimizer.
+        baseline_ler: Logical error rate obtained from the physical-device DEM.
         final_evaluation: Evaluation number used for the final optimized point.
         output_path: Output path for the generated figure.
 
@@ -80,12 +82,25 @@ def save_ler_plot(
         (final_evaluation, optimized_ler),
     ]
     evaluations, values = zip(*complete_history)
-    axes.plot(evaluations, values, marker="o", markersize=3)
+    axes.plot(
+        evaluations,
+        values,
+        marker="o",
+        markersize=3,
+        label="Training",
+    )
+    axes.axhline(
+        baseline_ler,
+        color="tab:orange",
+        linestyle="--",
+        label="Physical-device DEM",
+    )
     axes.set_title("LER History", fontsize=12)
     axes.set_xlabel("Objective Evaluation", fontsize=11)
     axes.set_ylabel("LER", fontsize=11)
     axes.tick_params(labelsize=10)
     axes.grid(axis="y", alpha=0.3)
+    axes.legend(fontsize=8)
     figure.tight_layout()
     figure.savefig(output_path, dpi=150)
     plt.close(figure)

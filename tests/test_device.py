@@ -10,6 +10,7 @@ import stim
 from fdem.device import (
     _add_uniform_noise,
     get_reference_dem,
+    logical_error_rate_from_physical_device_dem,
     sample_physical_device_syndromes,
 )
 
@@ -207,6 +208,38 @@ def test_reference_dem_builds_a_matching_decoder(tmp_path: Path) -> None:
     assert dem.num_detectors == circuit.num_detectors
     assert dem.num_observables == circuit.num_observables
     assert decoder.num_detectors == circuit.num_detectors
+
+
+def test_physical_device_dem_ler_supports_disjoint_pauli_channels(
+    tmp_path: Path,
+) -> None:
+    """The physical-noise baseline decodes a circuit containing PAULI_CHANNEL_2."""
+    circuit = stim.Circuit(
+        """
+        R 0 1
+        PAULI_CHANNEL_2(0.01, 0, 0, 0.02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) 0 1
+        M 0 1
+        DETECTOR rec[-2]
+        OBSERVABLE_INCLUDE(0) rec[-1]
+        """
+    )
+    _write_circuit(tmp_path, "physical-dem", circuit)
+    detectors, observables = sample_physical_device_syndromes(
+        "physical-dem",
+        shots=1_000,
+        seed=3,
+        separate_observables=True,
+        experiments_directory=tmp_path,
+    )
+
+    ler = logical_error_rate_from_physical_device_dem(
+        "physical-dem",
+        detectors,
+        observables,
+        experiments_directory=tmp_path,
+    )
+
+    assert 0 <= ler <= 1
 
 
 @pytest.mark.parametrize("probability", [-0.1, 1.1, np.nan, np.inf])

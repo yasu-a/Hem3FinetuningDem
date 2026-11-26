@@ -1,6 +1,7 @@
 """Tests for analytical detector-pair probabilities and their fit to device samples."""
 
 import numpy as np
+import pytest
 import stim
 
 from fdem.correlations import detector_pair_correlations
@@ -22,12 +23,26 @@ def test_dem_pair_probabilities_combine_shared_mechanisms() -> None:
         detector D3
     """)
     pair = (1 - 0.75**2 * 0.875) / 2
+    detector_two = (1 - 0.875 * 0.6) / 2
     np.testing.assert_allclose(dem_pair_probabilities(dem), [
-        [np.nan, pair, 0.0625, 0],
-        [pair, np.nan, 0.0625, 0],
-        [0.0625, 0.0625, np.nan, 0],
-        [0, 0, 0, np.nan],
+        [pair, pair, 0.0625, 0],
+        [pair, pair, 0.0625, 0],
+        [0.0625, 0.0625, detector_two, 0],
+        [0, 0, 0, 0],
     ])
+
+
+def test_single_detector_prior_changes_only_its_diagonal_probability() -> None:
+    """A single-detector mechanism affects its firing rate but no pair entry."""
+    lower = stim.DetectorErrorModel("error(0.1) D0\ndetector D1")
+    higher = stim.DetectorErrorModel("error(0.2) D0\ndetector D1")
+
+    lower_probabilities = dem_pair_probabilities(lower)
+    higher_probabilities = dem_pair_probabilities(higher)
+
+    assert lower_probabilities[0, 0] == pytest.approx(0.1)
+    assert higher_probabilities[0, 0] == pytest.approx(0.2)
+    assert lower_probabilities[0, 1] == higher_probabilities[0, 1] == 0
 
 
 def test_fit_recovers_pair_and_hyperedge_rates_from_syndromes() -> None:
@@ -45,25 +60,37 @@ def test_fit_recovers_pair_and_hyperedge_rates_from_syndromes() -> None:
     observed = detector_pair_correlations(syndromes)
     fitted = fit_dem_from_pij(baseline, observed)
 
-    np.testing.assert_allclose(dem_pair_probabilities(fitted), observed)
-    np.testing.assert_allclose([fitted[0].args_copy()[0], fitted[1].args_copy()[0]], [1/8, 1/16])
+    np.testing.assert_allclose(
+        dem_pair_probabilities(fitted),
+        observed,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        [fitted[0].args_copy()[0], fitted[1].args_copy()[0]],
+        [1 / 8, 1 / 16],
+        atol=1e-6,
+    )
     assert fitted[0].tag == baseline[0].tag
-    assert fitted[0].targets_copy() == baseline[0].targets_copy()
-    assert fitted[2:] == baseline[2:]
+    assert all(
+        fitted_instruction.targets_copy() == baseline_instruction.targets_copy()
+        for fitted_instruction, baseline_instruction in zip(fitted, baseline)
+        if fitted_instruction.type == "error"
+    )
+    assert fitted[3:] == baseline[3:]
 
 
-def test_fit_uses_signed_estimates_and_keeps_unobserved_rates() -> None:
-    """Negative estimates meet a nonnegative bound and undefined pairs are skipped."""
-    baseline = stim.DetectorErrorModel("error(0.1) D0 D1\nerror(0.05) D1 D2")
-    observed = np.array([
-        [np.nan, -0.01, 0.2],
-        [-0.01, np.nan, np.nan],
-        [0.2, np.nan, np.nan],
-    ])
+def test_fit_estimates_single_detector_prior_from_diagonal() -> None:
+    """Diagonal firing probabilities make a single-detector prior identifiable."""
+    baseline = stim.DetectorErrorModel("error(0.01) D0\nerror(0.02) D0 D1")
+    target = stim.DetectorErrorModel("error(0.12) D0\nerror(0.08) D0 D1")
+    observed = dem_pair_probabilities(target)
     fitted = fit_dem_from_pij(baseline, observed)
 
-    np.testing.assert_allclose(fitted[0].args_copy(), [0], atol=1e-10)
-    assert fitted[1] == baseline[1]
+    np.testing.assert_allclose(
+        [instruction.args_copy()[0] for instruction in fitted],
+        [0.12, 0.08],
+        atol=1e-7,
+    )
 
 
 def test_pair_probability_gradient_matches_central_difference() -> None:
@@ -77,12 +104,17 @@ def test_pair_probability_gradient_matches_central_difference() -> None:
     )
     observed = np.array(
         [
-            [np.nan, 0.15, 0.07],
-            [0.15, np.nan, 0.09],
-            [0.07, 0.09, np.nan],
+            [0.2, 0.15, 0.07],
+            [0.15, 0.18, 0.09],
+            [0.07, 0.09, 0.25],
         ]
     )
-    _, analytic = pair_probability_mse_and_gradient(dem, observed)
+    pair_loss_weight = 2.5
+    _, analytic = pair_probability_mse_and_gradient(
+        dem,
+        observed,
+        pair_loss_weight,
+    )
     probabilities = np.array(
         [
             instruction.args_copy()[0]
@@ -101,9 +133,17 @@ def test_pair_probability_gradient_matches_central_difference() -> None:
         lower[index] -= epsilon
         upper_dem = with_priors(dem, -np.expm1(-upper) / 2)
         lower_dem = with_priors(dem, -np.expm1(-lower) / 2)
-        upper_loss, _ = pair_probability_mse_and_gradient(upper_dem, observed)
-        lower_loss, _ = pair_probability_mse_and_gradient(lower_dem, observed)
+        upper_loss, _ = pair_probability_mse_and_gradient(
+            upper_dem,
+            observed,
+            pair_loss_weight,
+        )
+        lower_loss, _ = pair_probability_mse_and_gradient(
+            lower_dem,
+            observed,
+            pair_loss_weight,
+        )
         numerical[index] = (upper_loss - lower_loss) / (2 * epsilon)
 
     np.testing.assert_allclose(analytic, numerical, rtol=1e-6, atol=1e-9)
-    assert analytic[-1] == 0
+    assert analytic[-1] != 0

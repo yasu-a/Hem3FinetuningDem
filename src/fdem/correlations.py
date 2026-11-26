@@ -10,16 +10,16 @@ def detector_pair_correlations(syndromes: np.ndarray) -> np.ndarray:
     """Estimate signed pair-error probabilities from detection-event samples.
 
     This implements Eq. (1) of McEwen et al. for binary detection events. The
-    diagonal is undefined because it does not represent a pair of distinct
-    detectors. Finite-sample combinations with a negative square-root argument
-    are also undefined.
+    diagonal contains each detector's empirical firing probability. Finite-sample
+    off-diagonal combinations with a negative square-root argument are undefined.
 
     Args:
         syndromes: Binary detection-event samples with shape ``(shots, detectors)``.
 
     Returns:
         A symmetric ``(detectors, detectors)`` matrix of signed pair-error
-        probabilities. Undefined entries and the diagonal are ``NaN``.
+        probabilities with detector firing probabilities on the diagonal. Undefined
+        off-diagonal entries are ``NaN``.
 
     Raises:
         ValueError: If the samples are empty, are not two-dimensional, contain
@@ -48,7 +48,8 @@ def _pair_correlations_from_counts(
         shots: Number of samples represented by the counts.
 
     Returns:
-        A symmetric pair-correlation matrix with an undefined diagonal.
+        A symmetric pair-correlation matrix with detector firing probabilities on its
+        diagonal.
     """
     hits = joint_hits.diagonal()
     xor_hits = hits[:, None] + hits - 2 * joint_hits
@@ -63,7 +64,7 @@ def _pair_correlations_from_counts(
     )
     ratio[ratio < 0] = np.nan
     correlations = (1 - np.sqrt(ratio)) / 2
-    np.fill_diagonal(correlations, np.nan)
+    np.fill_diagonal(correlations, hits / shots)
     return correlations
 
 
@@ -72,7 +73,8 @@ def estimate_pij(circuit: stim.Circuit | stim.DetectorErrorModel, shots: int,
     """Return a symmetric matrix indexed by Stim detector ID.
 
     Sample detection events from a circuit or detector error model and keep
-    signed estimates. The diagonal and undefined pairs are represented by NaN.
+    signed estimates. The diagonal contains detector firing probabilities, and
+    undefined off-diagonal pairs are represented by NaN.
 
     Args:
         circuit: Stim circuit or detector error model to sample.

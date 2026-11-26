@@ -25,32 +25,34 @@ def test_pair_correlations_estimate_shared_detection_process() -> None:
 
     correlations = detector_pair_correlations(syndromes)
 
-    assert np.isnan(correlations[0, 0])
-    assert np.isnan(correlations[1, 1])
+    assert correlations[0, 0] == pytest.approx(0.25)
+    assert correlations[1, 1] == pytest.approx(0.25)
     assert correlations[0, 1] == pytest.approx(0.25)
     assert correlations[1, 0] == pytest.approx(0.25)
 
 
-def test_pair_correlation_difference_is_upper_triangle_rmse() -> None:
-    """Correlation difference uses each finite detector pair exactly once."""
+def test_correlation_difference_normalizes_single_and_pair_mse_separately() -> None:
+    """Combined RMSE independently normalizes diagonal and upper-triangle errors."""
     target = np.array(
         [
-            [np.nan, 0.1, 0.2],
-            [0.1, np.nan, np.nan],
-            [0.2, np.nan, np.nan],
+            [0.1, 0.1, 0.2],
+            [0.1, 0.2, np.nan],
+            [0.2, np.nan, 0.3],
         ]
     )
     model = np.array(
         [
-            [np.nan, 0.2, 0.4],
-            [0.2, np.nan, 0.5],
-            [0.4, 0.5, np.nan],
+            [0.2, 0.2, 0.4],
+            [0.2, 0.4, 0.5],
+            [0.4, 0.5, 0.3],
         ]
     )
 
     difference = DetectorPairCorrelationStatistics().difference(target, model)
 
-    assert difference == pytest.approx(np.sqrt((0.1**2 + 0.2**2) / 2))
+    single_mse = (0.1**2 + 0.2**2 + 0.0**2) / 3
+    pair_mse = (0.1**2 + 0.2**2) / 2
+    assert difference == pytest.approx(np.sqrt(single_mse + pair_mse))
 
 
 @pytest.mark.parametrize(
@@ -71,14 +73,14 @@ def test_pair_correlations_reject_invalid_syndromes(syndromes: np.ndarray) -> No
 def test_pair_correlation_difference_requires_a_valid_pair() -> None:
     """Correlation RMSE rejects matrices without a jointly finite detector pair."""
     statistics = DetectorPairCorrelationStatistics()
-    undefined = np.full((2, 2), np.nan)
+    undefined = np.array([[0.1, np.nan], [np.nan, 0.2]])
 
     with pytest.raises(ValueError):
         statistics.difference(undefined, undefined)
 
 
 def test_combined_statistics_reuses_firing_rates_and_pair_correlations() -> None:
-    """Combined calculation matches both existing component implementations."""
+    """The unified matrix combines firing rates with existing pair correlations."""
     syndromes = np.array(
         [
             [0, 0, 0],
@@ -89,10 +91,10 @@ def test_combined_statistics_reuses_firing_rates_and_pair_correlations() -> None
         dtype=bool,
     )
 
-    firing_rates, correlations = DetectorCombinedStatistics().calculate(syndromes)
+    correlations = DetectorCombinedStatistics().calculate(syndromes)
 
     np.testing.assert_allclose(
-        firing_rates,
+        np.diag(correlations),
         DetectorFiringRateStatistics().calculate(syndromes),
     )
     np.testing.assert_allclose(
@@ -106,31 +108,28 @@ def test_combined_loss_matches_independently_normalized_definition() -> None:
     """Combined loss equals the weighted sum of separately normalized MSE values."""
     target_firing = np.array([0.1, 0.2, 0.3])
     model_firing = np.array([0.2, 0.4, 0.3])
-    target_correlations = np.array(
+    target_statistics = np.array(
         [
-            [np.nan, 0.1, 0.2],
-            [0.1, np.nan, np.nan],
-            [0.2, np.nan, np.nan],
+            [0.1, 0.1, 0.2],
+            [0.1, 0.2, np.nan],
+            [0.2, np.nan, 0.3],
         ]
     )
-    model_correlations = np.array(
+    model_statistics = np.array(
         [
-            [np.nan, 0.2, 0.4],
-            [0.2, np.nan, 0.9],
-            [0.4, 0.9, np.nan],
+            [0.2, 0.2, 0.4],
+            [0.2, 0.4, 0.9],
+            [0.4, 0.9, 0.3],
         ]
     )
     statistics = DetectorCombinedStatistics(correlation_weight=2.0)
 
-    metrics = statistics.metrics(
-        (target_firing, target_correlations),
-        (model_firing, model_correlations),
-    )
+    metrics = statistics.metrics(target_statistics, model_statistics)
 
     firing_rate_mse = (0.1**2 + 0.2**2) / 3
     pair_correlation_mse = (0.1**2 + 0.2**2) / 2
-    assert metrics["firing_rate_rmse"] == pytest.approx(np.sqrt(firing_rate_mse))
-    assert metrics["pair_correlation_rmse"] == pytest.approx(
+    assert metrics["single_rmse"] == pytest.approx(np.sqrt(firing_rate_mse))
+    assert metrics["pair_rmse"] == pytest.approx(
         np.sqrt(pair_correlation_mse)
     )
     assert metrics["loss"] == pytest.approx(
@@ -151,14 +150,11 @@ def test_zero_correlation_weight_matches_firing_rate_rmse() -> None:
     """A zero pair weight reduces combined loss to firing-rate RMSE."""
     target_firing = np.array([0.1, 0.2])
     model_firing = np.array([0.3, 0.1])
-    target_correlations = np.array([[np.nan, 0.1], [0.1, np.nan]])
-    model_correlations = np.array([[np.nan, 0.4], [0.4, np.nan]])
+    target_correlations = np.array([[0.1, 0.1], [0.1, 0.2]])
+    model_correlations = np.array([[0.3, 0.4], [0.4, 0.1]])
     statistics = DetectorCombinedStatistics(correlation_weight=0.0)
 
-    loss = statistics.difference(
-        (target_firing, target_correlations),
-        (model_firing, model_correlations),
-    )
+    loss = statistics.difference(target_correlations, model_correlations)
 
     firing_rate_rmse = np.sqrt(((0.3 - 0.1) ** 2 + (0.1 - 0.2) ** 2) / 2)
     assert loss == pytest.approx(firing_rate_rmse)
