@@ -10,14 +10,7 @@ import scipy.optimize
 import scipy.sparse
 import stim
 
-
-def _detector_support(instruction: stim.DemInstruction) -> tuple[int, ...]:
-    """Return the detectors flipped by the whole mechanism, including all components."""
-    detectors = set()
-    for target in instruction.targets_copy():
-        if target.is_relative_detector_id():
-            detectors.symmetric_difference_update((target.val,))
-    return tuple(sorted(detectors))
+from .dem import detector_support
 
 
 def _log_rates(dem: stim.DetectorErrorModel) -> dict[tuple[int, ...], float]:
@@ -26,7 +19,7 @@ def _log_rates(dem: stim.DetectorErrorModel) -> dict[tuple[int, ...], float]:
     for instruction in dem.flattened():
         if instruction.type != "error":
             continue
-        support = _detector_support(instruction)
+        support = detector_support(instruction)
         if not support:
             continue
         probability = instruction.args_copy()[0]
@@ -116,7 +109,7 @@ def fit_dem(
     flattened = baseline.flattened()
     for instruction in flattened:
         if instruction.type == "error":
-            support = _detector_support(instruction)
+            support = detector_support(instruction)
             duplicates[support] = duplicates.get(support, 0) + 1
 
     fitted = stim.DetectorErrorModel()
@@ -124,7 +117,7 @@ def fit_dem(
         if instruction.type != "error":
             fitted.append(instruction)
             continue
-        support = _detector_support(instruction)
+        support = detector_support(instruction)
         if not support:
             fitted.append(instruction)
             continue
