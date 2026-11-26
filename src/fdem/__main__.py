@@ -20,7 +20,17 @@ from .statistics import DetectorFiringRateStatistics, ISyndromeStatistics
 # Experiment settings. Change these values to try different configurations.
 DISTANCE = 3
 ROUNDS = 3
-PHYSICAL_ERROR_RATE = 0.001
+PHYSICAL_MODEL = 0
+MODEL_0_USE_LEGACY_UNIFORM_NOISE = True
+LEGACY_PHYSICAL_ERROR_RATE = 0.001
+ONE_QUBIT_ERROR_PROBABILITY = 0.0001
+TWO_QUBIT_ERROR_PROBABILITY = 0.005
+RESET_ERROR_PROBABILITY = 0.001
+MEASUREMENT_ERROR_PROBABILITY = 0.002
+IDLE_Z_ERROR_PROBABILITY = 0.0005
+SPATIAL_VARIATION = 0.3
+TEMPORAL_GROWTH_COEFFICIENT = 0.2
+PHYSICAL_MODEL_SEED = 0
 SHOTS = 100_000
 MODEL_SHOTS = 10_000
 OPTIMIZATION_STEPS = 300
@@ -33,12 +43,31 @@ LER_PLOT_PATH = Path("var/ler.png")
 def build_dem(circuit: stim.Circuit) -> stim.DetectorErrorModel:
     """Build a flattened detector error model from a circuit.
 
+    ``PAULI_CHANNEL_2`` contains mutually exclusive error branches that cannot be
+    represented exactly by a DEM's independent error mechanisms. For circuits that
+    contain this instruction, the conversion enables Stim's disjoint-error
+    approximation only up to the largest channel probability present in the circuit.
+
     Args:
         circuit: Circuit to convert into a detector error model.
 
     Returns:
         The circuit-derived detector error model with repeat blocks expanded.
     """
+    channel_probabilities = [
+        sum(instruction.gate_args_copy())
+        for instruction in circuit.flattened()
+        if instruction.name == "PAULI_CHANNEL_2"
+    ]
+    if channel_probabilities:
+        approximation_threshold = np.nextafter(
+            max(channel_probabilities),
+            np.inf,
+        )
+        return circuit.detector_error_model(
+            decompose_errors=True,
+            approximate_disjoint_errors=approximation_threshold,
+        ).flattened()
     return circuit.detector_error_model(decompose_errors=True).flattened()
 
 
@@ -183,10 +212,41 @@ def main() -> None:
     Returns:
         None.
     """
+    uniform_error_rate = (
+        LEGACY_PHYSICAL_ERROR_RATE
+        if PHYSICAL_MODEL == 0 and MODEL_0_USE_LEGACY_UNIFORM_NOISE
+        else None
+    )
+    print(f"distance = {DISTANCE}")
+    print(f"QEC rounds = {ROUNDS}")
+    print(f"physical model = {PHYSICAL_MODEL}")
+    if uniform_error_rate is not None:
+        print(f"uniform physical error probability = {uniform_error_rate}")
+    else:
+        print(f"1-qubit gate error probability = {ONE_QUBIT_ERROR_PROBABILITY}")
+        print(f"2-qubit gate error probability = {TWO_QUBIT_ERROR_PROBABILITY}")
+        print(f"reset error probability = {RESET_ERROR_PROBABILITY}")
+        print(f"measurement error probability = {MEASUREMENT_ERROR_PROBABILITY}")
+        print(f"idle Z error probability = {IDLE_Z_ERROR_PROBABILITY}")
+        print(f"spatial variation = {SPATIAL_VARIATION}")
+        print(f"temporal growth coefficient = {TEMPORAL_GROWTH_COEFFICIENT}")
+    print(f"physical model seed = {PHYSICAL_MODEL_SEED}")
+    if PHYSICAL_MODEL >= 1:
+        print("DEM conversion = disjoint-error approximation for PAULI_CHANNEL_2")
+
     physical_device_circuit = build_physical_device_circuit(
         DISTANCE,
         ROUNDS,
-        PHYSICAL_ERROR_RATE,
+        uniform_error_rate,
+        model=PHYSICAL_MODEL,
+        one_qubit_error_probability=ONE_QUBIT_ERROR_PROBABILITY,
+        two_qubit_error_probability=TWO_QUBIT_ERROR_PROBABILITY,
+        reset_error_probability=RESET_ERROR_PROBABILITY,
+        measurement_error_probability=MEASUREMENT_ERROR_PROBABILITY,
+        idle_z_error_probability=IDLE_Z_ERROR_PROBABILITY,
+        spatial_variation=SPATIAL_VARIATION,
+        temporal_growth_coefficient=TEMPORAL_GROWTH_COEFFICIENT,
+        seed=PHYSICAL_MODEL_SEED,
     )
 
     # 1. Use the circuit-derived naive DEM directly as the initial DEM.
@@ -269,8 +329,6 @@ def main() -> None:
         LER_PLOT_PATH,
     )
 
-    print(f"distance = {DISTANCE}")
-    print(f"physical error rate = {PHYSICAL_ERROR_RATE}")
     print(f"DEM error instructions = {len(error_instructions)}")
     print(f"first initial error = {error_instructions[0]}")
     print(f"syndrome samples = {syndrome_samples.shape}")
