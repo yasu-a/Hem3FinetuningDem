@@ -19,7 +19,8 @@ explicitly directed otherwise.
 ## Python Style
 
 - Do not use future annotations such as `from __future__ import annotations`.
-- Add a docstring to every function.
+- Add a docstring to every function using Google-style sections.
+- Document function arguments, return values, and raised exceptions when applicable.
 - Prefer modern Python syntax for type hints.
   - Use `A | B` instead of `typing.Union`.
   - Use `T | None` instead of `typing.Optional`.
@@ -54,12 +55,18 @@ explicitly directed otherwise.
 - Do not run production workloads or expensive numerical computations unless explicitly
   requested.
 
+## Figures
+
+- Use a compact figure size suitable for direct placement in documents.
+- Use large, legible titles, axis labels, and tick labels relative to the figure size.
+
 ## Completion Checklist
 
 - [ ] All new or modified comments are written in English.
 - [ ] The commit message is written in English.
 - [ ] All new or modified exception messages are written in English.
 - [ ] Every new or modified function has a docstring.
+- [ ] Function docstrings document arguments, return values, and raised exceptions.
 - [ ] Every new or modified public field has an attribute docstring immediately after it.
 - [ ] No future annotations were added.
 - [ ] No new uses of `typing.Union`, `Optional`, `List`, or `Dict` were added.
@@ -68,3 +75,4 @@ explicitly directed otherwise.
 - [ ] Relevant pytest tests pass.
 - [ ] The full pytest suite was run at the final stage.
 - [ ] No production workload was run without explicit instructions.
+- [ ] Generated figures use a compact size and legible text.
