@@ -20,7 +20,7 @@ from .statistics import DetectorFiringRateStatistics, ISyndromeStatistics
 # Experiment settings. Change these values to try different configurations.
 DISTANCE = 3
 ROUNDS = 3
-PHYSICAL_MODEL = 0
+PHYSICAL_MODEL = 4
 MODEL_0_USE_LEGACY_UNIFORM_NOISE = True
 LEGACY_PHYSICAL_ERROR_RATE = 0.001
 ONE_QUBIT_ERROR_PROBABILITY = 0.0001
