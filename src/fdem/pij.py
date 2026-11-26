@@ -91,6 +91,72 @@ def dem_pair_probabilities(dem: stim.DetectorErrorModel) -> np.ndarray:
     return pair_probabilities
 
 
+def pair_probability_mse_and_gradient(
+    dem: stim.DetectorErrorModel,
+    observed_pij: np.ndarray,
+) -> tuple[float, np.ndarray]:
+    """Calculate pair-probability MSE and its analytic log-rate gradient.
+
+    The gradient is taken with respect to one parity log rate
+    ``-log(1 - 2p)`` per flattened DEM error instruction. Detector pairs absent from
+    the DEM contribute a constant residual to the MSE but no gradient.
+
+    Args:
+        dem: Detector error model supplying the predicted pair probabilities.
+        observed_pij: Square observed pair-probability matrix. The finite entries in
+            its upper triangle define the MSE.
+
+    Returns:
+        The pair-probability MSE and its gradient in flattened error-instruction order.
+
+    Raises:
+        ValueError: If the matrix shape is invalid, no finite pair is available, no
+            DEM-supported pair is finite, or a pair-visible probability is at least
+            0.5.
+    """
+    if observed_pij.shape != (dem.num_detectors, dem.num_detectors):
+        raise ValueError("Pair matrix shape must match the number of DEM detectors")
+
+    flattened = dem.flattened()
+    pairs, design, probabilities = _pair_design(flattened)
+    visible = design.getnnz(axis=0) > 0
+    pair_rates = design[:, visible] @ _log_rates(probabilities[visible])
+    supported_predictions = -np.expm1(-pair_rates) / 2
+
+    rows, columns = np.triu_indices(dem.num_detectors, k=1)
+    observed = observed_pij[rows, columns]
+    finite = np.isfinite(observed)
+    if not finite.any():
+        raise ValueError("No detector pair has a finite observed probability")
+
+    predictions = np.zeros_like(observed, dtype=float)
+    pair_indices = {
+        (int(left), int(right)): index
+        for index, (left, right) in enumerate(zip(rows, columns))
+    }
+    supported_indices = np.array(
+        [pair_indices[tuple(pair)] for pair in pairs],
+        dtype=np.intp,
+    )
+    predictions[supported_indices] = supported_predictions
+    residual = predictions[finite] - observed[finite]
+    mse = float(np.mean(residual**2))
+
+    supported_observed = observed_pij[tuple(pairs.T)]
+    usable = np.isfinite(supported_observed)
+    if not usable.any():
+        raise ValueError("No DEM-supported detector pair has a finite estimate")
+    supported_residual = supported_predictions[usable] - supported_observed[usable]
+    supported_slope = 0.5 - supported_predictions[usable]
+    gradient = np.asarray(
+        2
+        / finite.sum()
+        * design[usable].T
+        @ (supported_residual * supported_slope)
+    ).reshape(-1)
+    return mse, gradient
+
+
 def fit_dem_from_pij(
     baseline: stim.DetectorErrorModel,
     observed_pij: np.ndarray,

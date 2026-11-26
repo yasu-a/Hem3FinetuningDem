@@ -4,7 +4,12 @@ import numpy as np
 import stim
 
 from fdem.correlations import detector_pair_correlations
-from fdem.pij import dem_pair_probabilities, fit_dem_from_pij
+from fdem.dem import with_priors
+from fdem.pij import (
+    dem_pair_probabilities,
+    fit_dem_from_pij,
+    pair_probability_mse_and_gradient,
+)
 
 
 def test_dem_pair_probabilities_combine_shared_mechanisms() -> None:
@@ -59,3 +64,46 @@ def test_fit_uses_signed_estimates_and_keeps_unobserved_rates() -> None:
 
     np.testing.assert_allclose(fitted[0].args_copy(), [0], atol=1e-10)
     assert fitted[1] == baseline[1]
+
+
+def test_pair_probability_gradient_matches_central_difference() -> None:
+    """The analytic log-rate gradient agrees with numerical differentiation."""
+    dem = stim.DetectorErrorModel(
+        """
+        error(0.08) D0 D1
+        error(0.04) D0 D1 D2
+        error(0.2) D2
+        """
+    )
+    observed = np.array(
+        [
+            [np.nan, 0.15, 0.07],
+            [0.15, np.nan, 0.09],
+            [0.07, 0.09, np.nan],
+        ]
+    )
+    _, analytic = pair_probability_mse_and_gradient(dem, observed)
+    probabilities = np.array(
+        [
+            instruction.args_copy()[0]
+            for instruction in dem
+            if instruction.type == "error"
+        ]
+    )
+    log_rates = -np.log1p(-2 * probabilities)
+    numerical = np.empty_like(log_rates)
+    epsilon = 1e-6
+
+    for index in range(log_rates.size):
+        upper = log_rates.copy()
+        lower = log_rates.copy()
+        upper[index] += epsilon
+        lower[index] -= epsilon
+        upper_dem = with_priors(dem, -np.expm1(-upper) / 2)
+        lower_dem = with_priors(dem, -np.expm1(-lower) / 2)
+        upper_loss, _ = pair_probability_mse_and_gradient(upper_dem, observed)
+        lower_loss, _ = pair_probability_mse_and_gradient(lower_dem, observed)
+        numerical[index] = (upper_loss - lower_loss) / (2 * epsilon)
+
+    np.testing.assert_allclose(analytic, numerical, rtol=1e-6, atol=1e-9)
+    assert analytic[-1] == 0

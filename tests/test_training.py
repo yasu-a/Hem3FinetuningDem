@@ -7,6 +7,7 @@ import stim
 from fdem.__main__ import (
     parse_arguments,
     train_dem_with_cobyla,
+    train_dem_with_gradient_descent,
     train_dem_with_pair_least_squares,
 )
 from fdem.pij import dem_pair_probabilities
@@ -18,7 +19,11 @@ from fdem.statistics import (
 
 @pytest.mark.parametrize(
     ("extra_arguments", "expected_method"),
-    [([], "cobyla"), (["--training-method", "pair-lsq"], "pair-lsq")],
+    [
+        ([], "cobyla"),
+        (["--training-method", "pair-lsq"], "pair-lsq"),
+        (["--training-method", "gradient-descent"], "gradient-descent"),
+    ],
 )
 def test_training_method_can_be_selected_from_command_line(
     monkeypatch: pytest.MonkeyPatch,
@@ -139,3 +144,37 @@ def test_pair_least_squares_training_fits_observed_correlations() -> None:
     np.testing.assert_allclose(fitted, observed, equal_nan=True, atol=1e-10)
     assert loss_history == pytest.approx([0.0], abs=1e-10)
     assert reported == [(1, {"loss": loss_history[0]})]
+
+
+def test_gradient_descent_reduces_pair_correlation_rmse() -> None:
+    """Analytic gradient descent lowers RMSE while retaining pair-invisible priors."""
+    initial_dem = stim.DetectorErrorModel(
+        """
+        error(0.03) D0 D1
+        error(0.02) D0 D2
+        error(0.01) D1 D2
+        error(0.04) D2
+        """
+    )
+    target_dem = stim.DetectorErrorModel(
+        """
+        error(0.12) D0 D1
+        error(0.08) D0 D2
+        error(0.06) D1 D2
+        error(0.2) D2
+        """
+    )
+    physical_syndromes, _, _ = target_dem.compile_sampler(seed=4).sample(50_000)
+
+    fitted_dem, loss_history = train_dem_with_gradient_descent(
+        initial_dem,
+        physical_syndromes,
+        steps=50,
+        learning_rate=1.0,
+    )
+
+    assert len(loss_history) == 50
+    assert loss_history[-1] < loss_history[0]
+    assert fitted_dem[3].args_copy() == pytest.approx(
+        initial_dem[3].args_copy()
+    )

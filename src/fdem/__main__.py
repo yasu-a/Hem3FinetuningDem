@@ -12,7 +12,11 @@ from tqdm import tqdm
 
 from .dem import with_priors
 from .device import get_reference_dem, sample_physical_device_syndromes
-from .pij import dem_pair_probabilities, fit_dem_from_pij
+from .pij import (
+    dem_pair_probabilities,
+    fit_dem_from_pij,
+    pair_probability_mse_and_gradient,
+)
 from .plot import save_ler_plot, save_loss_plot
 from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
 
@@ -20,13 +24,14 @@ from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
 # Optimization settings. Change these values to try different configurations.
 SHOTS = 100_000
 MODEL_SHOTS = 10_000
-OPTIMIZATION_STEPS = 300
+OPTIMIZATION_STEPS = 2000
 LEARNING_RATE = 0.0001
+GRADIENT_LEARNING_RATE = 0.1
 REFERENCE_ERROR_PROBABILITY = 0.001
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
 RESULTS_DIRECTORY = Path("var")
-TRAINING_METHODS = ("cobyla", "pair-lsq")
+TRAINING_METHODS = ("cobyla", "pair-lsq", "gradient-descent")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -192,6 +197,82 @@ def train_dem_with_pair_least_squares(
     return fitted_dem, [loss]
 
 
+def train_dem_with_gradient_descent(
+    initial_dem: stim.DetectorErrorModel,
+    physical_device_syndromes: np.ndarray,
+    *,
+    steps: int,
+    learning_rate: float,
+    callback: Callable[
+        [int, dict[str, float], stim.DetectorErrorModel],
+        None,
+    ] | None = None,
+) -> tuple[stim.DetectorErrorModel, list[float]]:
+    """Fit DEM probabilities using projected analytic gradient descent.
+
+    The optimization variables are parity log rates. Each iteration evaluates the
+    exact DEM pair probabilities, differentiates their MSE analytically, and projects
+    updated log rates onto the nonnegative domain. Pair-invisible mechanisms have zero
+    gradient and retain their initial probabilities.
+
+    Args:
+        initial_dem: Detector error model whose fixed structure will be fitted.
+        physical_device_syndromes: Syndrome samples collected from the physical device,
+            with shape ``(shots, detectors)``.
+        steps: Number of loss and gradient evaluations.
+        learning_rate: Positive gradient-descent step size in log-rate space.
+        callback: Optional function called after each evaluation with its RMSE and DEM.
+
+    Returns:
+        A tuple containing the fitted DEM and the pair-correlation RMSE history.
+
+    Raises:
+        ValueError: If steps or the learning rate is invalid, an initial prior is at
+            least 0.5, or the pair statistics cannot define the loss and gradient.
+    """
+    if steps <= 0:
+        raise ValueError("Gradient-descent steps must be positive")
+    if not np.isfinite(learning_rate) or learning_rate <= 0:
+        raise ValueError("Gradient learning rate must be finite and positive")
+
+    flattened = initial_dem.flattened()
+    initial_priors = np.array(
+        [
+            instruction.args_copy()[0]
+            for instruction in flattened
+            if instruction.type == "error"
+        ],
+        dtype=float,
+    )
+    if initial_priors.size == 0:
+        raise ValueError("Initial DEM must contain at least one error instruction")
+    if np.any(initial_priors >= 0.5):
+        raise ValueError("Gradient-descent DEM probabilities must be below 0.5")
+
+    observed_correlations = DetectorPairCorrelationStatistics().calculate(
+        physical_device_syndromes
+    )
+    log_rates = -np.log1p(-2 * initial_priors)
+    loss_history: list[float] = []
+    candidate_dem = flattened
+
+    for evaluation in range(1, steps + 1):
+        priors = -np.expm1(-log_rates) / 2
+        candidate_dem = with_priors(flattened, priors)
+        mse, gradient = pair_probability_mse_and_gradient(
+            candidate_dem,
+            observed_correlations,
+        )
+        rmse = float(np.sqrt(mse))
+        loss_history.append(rmse)
+        if callback is not None:
+            callback(evaluation, {"loss": rmse}, candidate_dem)
+        if evaluation < steps:
+            log_rates = np.maximum(0.0, log_rates - learning_rate * gradient)
+
+    return candidate_dem, loss_history
+
+
 def main() -> None:
     """Collect syndrome statistics and estimate the initial decoder LER.
 
@@ -199,7 +280,9 @@ def main() -> None:
         None.
     """
     arguments = parse_arguments()
-    experiment_results_directory = RESULTS_DIRECTORY / arguments.experiment
+    experiment_results_directory = (
+        RESULTS_DIRECTORY / arguments.experiment / arguments.training_method
+    )
     loss_plot_path = experiment_results_directory / "loss.png"
     ler_plot_path = experiment_results_directory / "ler.png"
     print(f"experiment = {arguments.experiment}")
@@ -243,7 +326,7 @@ def main() -> None:
     ler_history: list[tuple[int, float]] = []
 
     progress_total = (
-        OPTIMIZATION_STEPS if arguments.training_method == "cobyla" else 1
+        1 if arguments.training_method == "pair-lsq" else OPTIMIZATION_STEPS
     )
     with tqdm(total=progress_total, desc="Optimizing DEM", unit="eval") as progress:
 
@@ -290,10 +373,18 @@ def main() -> None:
                 seed=SEED + 1,
                 callback=update_progress,
             )
-        else:
+        elif arguments.training_method == "pair-lsq":
             optimized_dem, loss_history = train_dem_with_pair_least_squares(
                 initial_dem,
                 syndrome_samples,
+                callback=update_progress,
+            )
+        else:
+            optimized_dem, loss_history = train_dem_with_gradient_descent(
+                initial_dem,
+                syndrome_samples,
+                steps=OPTIMIZATION_STEPS,
+                learning_rate=GRADIENT_LEARNING_RATE,
                 callback=update_progress,
             )
 

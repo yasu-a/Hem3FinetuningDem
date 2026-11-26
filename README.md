@@ -36,12 +36,20 @@ least squares in parity log-rate space, select `pair-lsq`:
 python -m fdem --experiment d3-r3-default --training-method pair-lsq
 ```
 
-Both methods start from the same uniformly noisy reference DEM. The direct pair fit
-does not update single-detector mechanisms because they do not appear in detector-pair
-statistics.
+To iteratively minimize the exact pair-probability MSE with its analytic log-rate
+gradient, select `gradient-descent`:
 
-The generated figures are saved as `var/d3-r3-default/loss.png` and
-`var/d3-r3-default/ler.png`.
+```console
+python -m fdem --experiment d3-r3-default --training-method gradient-descent
+```
+
+All methods start from the same uniformly noisy reference DEM. The direct pair fit and
+gradient descent do not update single-detector mechanisms because they do not appear
+in detector-pair statistics.
+
+The generated figures are grouped by training method. For example, the default method
+saves them as `var/d3-r3-default/cobyla/loss.png` and
+`var/d3-r3-default/cobyla/ler.png`.
 
 For PowerShell, activate the environment with `.\.venv\Scripts\Activate.ps1`.
 
