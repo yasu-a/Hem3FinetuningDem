@@ -6,12 +6,84 @@ import numpy as np
 import stim
 
 
+def detector_pair_correlations(syndromes: np.ndarray) -> np.ndarray:
+    """Estimate signed pair-error probabilities from detection-event samples.
+
+    This implements Eq. (1) of McEwen et al. for binary detection events. The
+    diagonal is undefined because it does not represent a pair of distinct
+    detectors. Finite-sample combinations with a negative square-root argument
+    are also undefined.
+
+    Args:
+        syndromes: Binary detection-event samples with shape ``(shots, detectors)``.
+
+    Returns:
+        A symmetric ``(detectors, detectors)`` matrix of signed pair-error
+        probabilities. Undefined entries and the diagonal are ``NaN``.
+
+    Raises:
+        ValueError: If the samples are empty, are not two-dimensional, contain
+            fewer than two detectors, or contain values other than zero and one.
+    """
+    if syndromes.ndim != 2 or syndromes.shape[0] == 0:
+        raise ValueError("Syndromes must be a non-empty two-dimensional array")
+    if syndromes.shape[1] < 2:
+        raise ValueError("Syndromes must contain at least two detectors")
+    if np.any((syndromes != 0) & (syndromes != 1)):
+        raise ValueError("Syndromes must contain only binary values")
+
+    samples = syndromes.astype(np.float64, copy=False)
+    joint_hits = samples.T @ samples
+    return _pair_correlations_from_counts(joint_hits, syndromes.shape[0])
+
+
+def _pair_correlations_from_counts(
+    joint_hits: np.ndarray,
+    shots: int,
+) -> np.ndarray:
+    """Calculate signed pair-error probabilities from joint hit counts.
+
+    Args:
+        joint_hits: Matrix whose entry ``(i, j)`` counts coincident detector hits.
+        shots: Number of samples represented by the counts.
+
+    Returns:
+        A symmetric pair-correlation matrix with an undefined diagonal.
+    """
+    hits = joint_hits.diagonal()
+    xor_hits = hits[:, None] + hits - 2 * joint_hits
+    pair_bias = 1 - 2 * xor_hits / shots
+    detector_bias = 1 - 2 * hits / shots
+    ratio = np.full_like(joint_hits, np.nan, dtype=float)
+    np.divide(
+        np.outer(detector_bias, detector_bias),
+        pair_bias,
+        out=ratio,
+        where=pair_bias != 0,
+    )
+    ratio[ratio < 0] = np.nan
+    correlations = (1 - np.sqrt(ratio)) / 2
+    np.fill_diagonal(correlations, np.nan)
+    return correlations
+
+
 def estimate_pij(circuit: stim.Circuit | stim.DetectorErrorModel, shots: int,
                  seed: int | None = None) -> np.ndarray:
     """Return a symmetric matrix indexed by Stim detector ID.
 
     Sample detection events from a circuit or detector error model and keep
     signed estimates. The diagonal and undefined pairs are represented by NaN.
+
+    Args:
+        circuit: Stim circuit or detector error model to sample.
+        shots: Number of detection-event samples.
+        seed: Optional Stim sampling seed.
+
+    Returns:
+        A symmetric signed pair-correlation matrix in Stim detector order.
+
+    Raises:
+        ValueError: If fewer than two shots or detectors are requested.
     """
     if shots < 2:
         raise ValueError("at least two shots are required")
@@ -29,16 +101,4 @@ def estimate_pij(circuit: stim.Circuit | stim.DetectorErrorModel, shots: int,
         samples = (batch[0] if from_dem else batch).astype(np.float64)
         joint_hits += samples.T @ samples
 
-    # Write the square-root argument in Eq. (1) as the product of the
-    # individual parity biases divided by the two-detector parity bias.
-    hits = joint_hits.diagonal()
-    xor_hits = hits[:, None] + hits - 2 * joint_hits
-    pair_bias = 1 - 2 * xor_hits / shots
-    detector_bias = 1 - 2 * hits / shots
-    ratio = np.full_like(joint_hits, np.nan)
-    np.divide(np.outer(detector_bias, detector_bias), pair_bias,
-              out=ratio, where=pair_bias != 0)
-    ratio[ratio < 0] = np.nan
-    pij = (1 - np.sqrt(ratio)) / 2
-    np.fill_diagonal(pij, np.nan)
-    return pij
+    return _pair_correlations_from_counts(joint_hits, shots)

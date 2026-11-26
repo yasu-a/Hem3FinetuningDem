@@ -30,7 +30,7 @@ def save_loss_plot(loss_history: list[float], output_path: Path) -> None:
     axes.plot(evaluations, loss_history)
     axes.set_title("Optimization Loss", fontsize=12)
     axes.set_xlabel("Objective Evaluation", fontsize=11)
-    axes.set_ylabel("MSE", fontsize=11)
+    axes.set_ylabel("RMSE", fontsize=11)
     axes.tick_params(labelsize=10)
     axes.grid(alpha=0.3)
     figure.tight_layout()

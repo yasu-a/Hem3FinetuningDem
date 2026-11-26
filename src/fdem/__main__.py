@@ -1,5 +1,6 @@
 """Minimal example for estimating a rotated surface code LER using a Stim DEM."""
 
+import argparse
 from collections.abc import Callable
 from pathlib import Path
 
@@ -10,35 +11,36 @@ from scipy.optimize import minimize
 from tqdm import tqdm
 
 from .device import (
-    build_physical_device_circuit,
+    load_physical_device_circuit,
     sample_physical_device_syndromes,
 )
 from .plot import save_ler_plot, save_loss_plot
-from .statistics import DetectorFiringRateStatistics, ISyndromeStatistics
+from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
 
 
-# Experiment settings. Change these values to try different configurations.
-DISTANCE = 3
-ROUNDS = 3
-PHYSICAL_MODEL = 4
-MODEL_0_USE_LEGACY_UNIFORM_NOISE = True
-LEGACY_PHYSICAL_ERROR_RATE = 0.001
-ONE_QUBIT_ERROR_PROBABILITY = 0.0001
-TWO_QUBIT_ERROR_PROBABILITY = 0.005
-RESET_ERROR_PROBABILITY = 0.001
-MEASUREMENT_ERROR_PROBABILITY = 0.002
-IDLE_Z_ERROR_PROBABILITY = 0.0005
-SPATIAL_VARIATION = 0.3
-TEMPORAL_GROWTH_COEFFICIENT = 0.2
-PHYSICAL_MODEL_SEED = 0
+# Optimization settings. Change these values to try different configurations.
 SHOTS = 100_000
 MODEL_SHOTS = 10_000
 OPTIMIZATION_STEPS = 300
 LEARNING_RATE = 0.0001
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
-LOSS_PLOT_PATH = Path("var/loss.png")
-LER_PLOT_PATH = Path("var/ler.png")
+RESULTS_DIRECTORY = Path("var")
+
+
+def parse_arguments() -> argparse.Namespace:
+    """Parse the experiment selection from the command line.
+
+    Returns:
+        Parsed command-line arguments containing the experiment directory name.
+    """
+    parser = argparse.ArgumentParser(prog="fdem", description=__doc__)
+    parser.add_argument(
+        "--experiment",
+        required=True,
+        help="Experiment directory name under experiments/",
+    )
+    return parser.parse_args()
 
 def build_dem(circuit: stim.Circuit) -> stim.DetectorErrorModel:
     """Build a flattened detector error model from a circuit.
@@ -212,42 +214,14 @@ def main() -> None:
     Returns:
         None.
     """
-    uniform_error_rate = (
-        LEGACY_PHYSICAL_ERROR_RATE
-        if PHYSICAL_MODEL == 0 and MODEL_0_USE_LEGACY_UNIFORM_NOISE
-        else None
-    )
-    print(f"distance = {DISTANCE}")
-    print(f"QEC rounds = {ROUNDS}")
-    print(f"physical model = {PHYSICAL_MODEL}")
-    if uniform_error_rate is not None:
-        print(f"uniform physical error probability = {uniform_error_rate}")
-    else:
-        print(f"1-qubit gate error probability = {ONE_QUBIT_ERROR_PROBABILITY}")
-        print(f"2-qubit gate error probability = {TWO_QUBIT_ERROR_PROBABILITY}")
-        print(f"reset error probability = {RESET_ERROR_PROBABILITY}")
-        print(f"measurement error probability = {MEASUREMENT_ERROR_PROBABILITY}")
-        print(f"idle Z error probability = {IDLE_Z_ERROR_PROBABILITY}")
-        print(f"spatial variation = {SPATIAL_VARIATION}")
-        print(f"temporal growth coefficient = {TEMPORAL_GROWTH_COEFFICIENT}")
-    print(f"physical model seed = {PHYSICAL_MODEL_SEED}")
-    if PHYSICAL_MODEL >= 1:
-        print("DEM conversion = disjoint-error approximation for PAULI_CHANNEL_2")
-
-    physical_device_circuit = build_physical_device_circuit(
-        DISTANCE,
-        ROUNDS,
-        uniform_error_rate,
-        model=PHYSICAL_MODEL,
-        one_qubit_error_probability=ONE_QUBIT_ERROR_PROBABILITY,
-        two_qubit_error_probability=TWO_QUBIT_ERROR_PROBABILITY,
-        reset_error_probability=RESET_ERROR_PROBABILITY,
-        measurement_error_probability=MEASUREMENT_ERROR_PROBABILITY,
-        idle_z_error_probability=IDLE_Z_ERROR_PROBABILITY,
-        spatial_variation=SPATIAL_VARIATION,
-        temporal_growth_coefficient=TEMPORAL_GROWTH_COEFFICIENT,
-        seed=PHYSICAL_MODEL_SEED,
-    )
+    arguments = parse_arguments()
+    physical_device_circuit = load_physical_device_circuit(arguments.experiment)
+    experiment_results_directory = RESULTS_DIRECTORY / arguments.experiment
+    loss_plot_path = experiment_results_directory / "loss.png"
+    ler_plot_path = experiment_results_directory / "ler.png"
+    print(f"experiment = {arguments.experiment}")
+    print(f"detectors = {physical_device_circuit.num_detectors}")
+    print(f"observables = {physical_device_circuit.num_observables}")
 
     # 1. Use the circuit-derived naive DEM directly as the initial DEM.
     naive_dem = build_dem(physical_device_circuit)
@@ -262,8 +236,8 @@ def main() -> None:
         SHOTS,
         SEED,
     )
-    statistics_calculator = DetectorFiringRateStatistics()
-    syndrome_rates = statistics_calculator.calculate(syndrome_samples)
+    statistics_calculator = DetectorPairCorrelationStatistics()
+    syndrome_correlations = statistics_calculator.calculate(syndrome_samples)
 
     # 3. Generate fixed evaluation data for tracking LER during optimization.
     evaluation_sampler = physical_device_circuit.compile_detector_sampler(seed=SEED + 2)
@@ -320,25 +294,25 @@ def main() -> None:
 
     # 4. Evaluate the optimized decoder on the same fixed data.
     optimized_ler = logical_error_rate(optimized_dem, detector_samples, actual_observables)
-    save_loss_plot(loss_history, LOSS_PLOT_PATH)
+    save_loss_plot(loss_history, loss_plot_path)
     save_ler_plot(
         ler_history,
         initial_ler,
         optimized_ler,
         len(loss_history),
-        LER_PLOT_PATH,
+        ler_plot_path,
     )
 
     print(f"DEM error instructions = {len(error_instructions)}")
     print(f"first initial error = {error_instructions[0]}")
     print(f"syndrome samples = {syndrome_samples.shape}")
-    print(f"mean detector rate = {syndrome_rates.mean():.6g}")
+    print(f"mean pair correlation = {np.nanmean(syndrome_correlations):.6g}")
     print(f"initial loss = {loss_history[0]:.8g}")
     print(f"best loss = {min(loss_history):.8g}")
     print(f"initial LER = {initial_ler:.6g}")
     print(f"optimized LER = {optimized_ler:.6g}")
-    print(f"loss plot = {LOSS_PLOT_PATH}")
-    print(f"LER plot = {LER_PLOT_PATH}")
+    print(f"loss plot = {loss_plot_path}")
+    print(f"LER plot = {ler_plot_path}")
 
 
 if __name__ == "__main__":
