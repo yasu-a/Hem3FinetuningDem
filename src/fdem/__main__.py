@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from .dem import with_priors
 from .device import sample_physical_device_syndromes
+from .pij import dem_pair_probabilities, fit_dem_from_pij
 from .plot import save_ler_plot, save_loss_plot
 from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
 
@@ -25,6 +26,7 @@ INITIAL_PRIOR = 0.001
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
 RESULTS_DIRECTORY = Path("var")
+TRAINING_METHODS = ("cobyla", "pair-lsq")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -39,7 +41,14 @@ def parse_arguments() -> argparse.Namespace:
         required=True,
         help="Experiment directory name under experiments/",
     )
+    parser.add_argument(
+        "--training-method",
+        choices=TRAINING_METHODS,
+        default="cobyla",
+        help="DEM probability fitting method (default: cobyla)",
+    )
     return parser.parse_args()
+
 
 def build_candidate_dem(
     detector_count: int,
@@ -137,7 +146,7 @@ def logical_error_rate(
     return float((predictions != observables).any(axis=1).mean())
 
 
-def train_dem(
+def train_dem_with_cobyla(
     initial_dem: stim.DetectorErrorModel,
     physical_device_syndromes: np.ndarray,
     syndrome_statistics: ISyndromeStatistics,
@@ -218,6 +227,46 @@ def train_dem(
     return with_priors(initial_dem, result.x), loss_history
 
 
+def train_dem_with_pair_least_squares(
+    initial_dem: stim.DetectorErrorModel,
+    physical_device_syndromes: np.ndarray,
+    callback: Callable[
+        [int, dict[str, float], stim.DetectorErrorModel],
+        None,
+    ] | None = None,
+) -> tuple[stim.DetectorErrorModel, list[float]]:
+    """Fit DEM probabilities directly from detector-pair correlations.
+
+    The fit converts independent error probabilities into additive parity log rates
+    and solves their detector-pair incidence equations with nonnegative bounded least
+    squares. Error mechanisms that do not contribute to any detector pair retain their
+    initial probabilities.
+
+    Args:
+        initial_dem: Detector error model whose fixed structure will be fitted.
+        physical_device_syndromes: Syndrome samples collected from the physical device,
+            with shape ``(shots, detectors)``.
+        callback: Optional function called once with the fitted loss and DEM.
+
+    Returns:
+        A tuple containing the fitted DEM and a one-element pair-correlation RMSE
+        history.
+
+    Raises:
+        ValueError: If the syndrome statistics or DEM-supported pair equations are
+            invalid.
+        RuntimeError: If the bounded least-squares solver does not converge.
+    """
+    statistics = DetectorPairCorrelationStatistics()
+    observed_correlations = statistics.calculate(physical_device_syndromes)
+    fitted_dem = fit_dem_from_pij(initial_dem, observed_correlations)
+    fitted_correlations = dem_pair_probabilities(fitted_dem)
+    loss = statistics.difference(observed_correlations, fitted_correlations)
+    if callback is not None:
+        callback(1, {"loss": loss}, fitted_dem)
+    return fitted_dem, [loss]
+
+
 def main() -> None:
     """Collect syndrome statistics and estimate the initial decoder LER.
 
@@ -229,6 +278,7 @@ def main() -> None:
     loss_plot_path = experiment_results_directory / "loss.png"
     ler_plot_path = experiment_results_directory / "ler.png"
     print(f"experiment = {arguments.experiment}")
+    print(f"training method = {arguments.training_method}")
 
     # 1. Collect training and evaluation data through the device sampling interface.
     syndrome_samples = sample_physical_device_syndromes(
@@ -264,7 +314,10 @@ def main() -> None:
     initial_ler = logical_error_rate(initial_dem, detector_samples, actual_observables)
     ler_history: list[tuple[int, float]] = []
 
-    with tqdm(total=OPTIMIZATION_STEPS, desc="Optimizing DEM", unit="eval") as progress:
+    progress_total = (
+        OPTIMIZATION_STEPS if arguments.training_method == "cobyla" else 1
+    )
+    with tqdm(total=progress_total, desc="Optimizing DEM", unit="eval") as progress:
 
         def update_progress(
             evaluation: int,
@@ -298,16 +351,23 @@ def main() -> None:
                 progress.set_postfix(loss=f"{loss:.3g}", refresh=False)
             progress.update(evaluation - progress.n)
 
-        optimized_dem, loss_history = train_dem(
-            initial_dem,
-            syndrome_samples,
-            statistics_calculator,
-            steps=OPTIMIZATION_STEPS,
-            model_shots=MODEL_SHOTS,
-            learning_rate=LEARNING_RATE,
-            seed=SEED + 1,
-            callback=update_progress,
-        )
+        if arguments.training_method == "cobyla":
+            optimized_dem, loss_history = train_dem_with_cobyla(
+                initial_dem,
+                syndrome_samples,
+                statistics_calculator,
+                steps=OPTIMIZATION_STEPS,
+                model_shots=MODEL_SHOTS,
+                learning_rate=LEARNING_RATE,
+                seed=SEED + 1,
+                callback=update_progress,
+            )
+        else:
+            optimized_dem, loss_history = train_dem_with_pair_least_squares(
+                initial_dem,
+                syndrome_samples,
+                callback=update_progress,
+            )
 
     # 4. Evaluate the optimized decoder on the same fixed data.
     optimized_ler = logical_error_rate(optimized_dem, detector_samples, actual_observables)

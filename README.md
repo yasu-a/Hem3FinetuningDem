@@ -28,6 +28,17 @@ python -m pip install -e .
 python -m fdem --experiment d3-r3-default
 ```
 
+The default `cobyla` method repeatedly samples the candidate DEM and minimizes the
+pair-correlation RMSE. To fit the pair probabilities directly with bounded linear
+least squares in parity log-rate space, select `pair-lsq`:
+
+```console
+python -m fdem --experiment d3-r3-default --training-method pair-lsq
+```
+
+The direct pair fit does not update single-detector mechanisms because they do not
+appear in detector-pair statistics.
+
 The generated figures are saved as `var/d3-r3-default/loss.png` and
 `var/d3-r3-default/ler.png`.
 
