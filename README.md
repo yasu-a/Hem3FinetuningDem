@@ -94,3 +94,30 @@ and `--regularization` to adjust the strength of the baseline prior.
 For an external simulator, pass its boolean detector-event array to
 `fdem.calibrate.fit_dem` with the baseline DEM. Measurements can be converted
 to detector events with Stim's measurement-to-detection-event converter.
+
+## Fit a DEM from detector-pair probabilities
+
+Pass the device experiment and the separate `.dem` noise model you want to fit.
+Use matching detector definitions and ordering in both inputs.
+
+```console
+python -m fdem.pij --experiment theata-d3-r5-pij --baseline-dem baseline.dem --output-dem fitted.dem --output-matrices pij.npz
+```
+
+The command estimates signed $p_{ij}$ from device syndrome shots and computes
+the baseline DEM's matrix analytically from its error mechanisms. The optional
+NPZ contains `device`, `baseline`, and `fitted` matrices in detector ID order.
+Use `--shots` and `--seed` to control device sampling.
+
+The fit minimizes the squared residuals in $-\log(1-2p_{ij})$ with nonnegative
+mechanism log rates. It uses the upper triangle and skips pairs whose estimates
+are undefined or reach $0.5$. Fitted mechanisms need baseline probabilities
+below $0.5$. Mechanisms with fewer than two detector targets after cancellation,
+including logical-only mechanisms, keep their baseline rates. Several mechanisms
+can contribute to the same pair, so the pair data can leave individual rates
+underdetermined.
+
+For detector-event arrays collected outside the bundled device simulator, call
+`fdem.correlations.detector_pair_correlations(syndromes)` and pass the resulting
+matrix with the baseline DEM to `fdem.pij.fit_dem_from_pij`. Use
+`fdem.pij.dem_pair_probabilities` to calculate the matrix for a DEM directly.
