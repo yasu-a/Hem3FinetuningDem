@@ -35,7 +35,71 @@ Pauli-channel probability in the circuit. Model 0 does not enable this approxima
 
 ```console
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+source .venv/bin/activate
 python -m pip install -e .
 python -m fdem
 ```
+
+For PowerShell, activate the environment with `.\.venv\Scripts\Activate.ps1`.
+
+## Local detector-correlation workbench
+
+After installing the package with Python 3.11 or newer, start the workbench.
+
+```console
+python -m fdem.web
+```
+
+Open <http://127.0.0.1:8765/>. Use **Run simulation** to apply the selected
+trap, timing, heating, cooling, and noise settings. **Run uniform DEM**
+generates a phenomenological baseline. Both runs show a signed $p_{ij}$
+heatmap and a circuit inspector. Download the PNG, the CSV in Stim detector
+order, or the noisy Stim circuit. The uniform run also exports its DEM.
+
+When using the exports for DEM fitting, verify that each detector ID and
+logical observable refers to the same parity in the two circuits. For the
+distance-3, three-round example, the one-LIZ and uniform runs share detector
+order. The two-LIZ and uniform runs require a detector mapping first.
+
+The launcher listens on this computer's loopback interface. Use
+`python -m fdem.web --port 8766` to choose a different port. The browser
+assets, compiler, circuit schedules, and default calibration table are
+bundled with the package. [THeatA license and attribution](src/fdem/_theata/NOTICE).
+
+## Calibrate a DEM from saved Stim circuits
+
+```console
+python -m fdem.calibrate --output-dem fitted.dem
+```
+
+The built-in benchmark uses a distance-3 rotated surface code with three
+rounds. It samples a target Stim circuit with gate, reset, and measurement
+error rates of `0.002`, `0.001`, and `0.02` and starts from a baseline
+circuit with all three rates set to `0.001`.
+
+Calibration uses the training shots' detector bits and the baseline DEM's
+existing error mechanisms. It fits their probabilities jointly from detector
+parities, including higher-order parities for baseline hyperedges. The
+regularization penalty pulls the fitted log rates toward the baseline. For
+mechanisms that flip the same detectors, the fit estimates their combined
+rate and uses the baseline to allocate it. Rates for errors that flip only
+logical observables come from the baseline.
+
+The benchmark reports single-detector and pair-parity RMSE on held-out shots.
+It also reports the logical failure count for each decoder on those same
+shots. The target DEM in the built-in benchmark comes from the known target
+circuit and is used as a reference in evaluation.
+
+### Supply a hardware model
+
+```console
+python -m fdem.calibrate --target-circuit hardware.stim --baseline-circuit baseline.stim --output-dem fitted.dem
+```
+
+Use the same detector and logical observable definitions and ordering in
+both circuits. The program checks detector coordinates and the observable
+count. Use `--train-shots`, `--test-shots`, and `--seed` to control sampling
+and `--regularization` to adjust the strength of the baseline prior.
+For an external simulator, pass its boolean detector-event array to
+`fdem.calibrate.fit_dem` with the baseline DEM. Measurements can be converted
+to detector events with Stim's measurement-to-detection-event converter.

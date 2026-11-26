@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Configure a one-dimensional QCCD model and estimate surface-code detector correlations with THeatA.">
+  <title>THeatA · Detector correlations</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead-inner">
+      <span class="brand"><i aria-hidden="true"></i>THeatA</span>
+      <span class="masthead-title">QCCD simulator</span>
+      <span class="local"><i aria-hidden="true"></i>Local workspace</span>
+    </div>
+  </header>
+  <main class="container">
+    <div class="intro">
+      <h1>Surface-code correlations</h1>
+      <p>Sample pairwise detector correlations from a hardware model or a uniform error rate.</p>
+    </div>
+    <div class="workspace">
+      <form id="settings" aria-label="Simulation settings">
+        <fieldset id="controls" disabled>
+          <section class="panel section" aria-labelledby="run-label">
+            <div class="section-heading"><h2 id="run-label">Simulation</h2><span>Rotated surface code</span></div>
+            <div class="fields">
+              <label>Code distance<select id="distance" required></select></label>
+              <label>Rounds<input id="rounds" type="number" min="1" value="3" required></label>
+              <label>Shots<input id="shots" type="number" min="2" max="2000000" value="100000" required></label>
+              <label>Seed<input id="seed" type="number" min="0" max="9007199254740991" value="42" required></label>
+            </div>
+          </section>
+          <section class="panel section uniform-run" aria-labelledby="uniform-label">
+            <h2 id="uniform-label">Uniform error baseline</h2>
+            <p id="uniform-help" class="hint">Each round starts with independent data X and Z faults. Each readout can flip. All use probability <i>p</i>.</p>
+            <div class="uniform-actions">
+              <label>Error probability <i>p</i>
+                <input id="uniform-p" type="number" min="0" max="0.5" step="any" value="0.01"
+                       form="uniform-settings" aria-describedby="uniform-help" required>
+              </label>
+              <button id="run-uniform" type="submit" class="secondary" form="uniform-settings">Run uniform DEM</button>
+            </div>
+          </section>
+          <section class="panel section" aria-labelledby="layout-label">
+            <div class="section-heading">
+              <h2 id="layout-label">Trap layout</h2>
+              <div class="presets" aria-label="Layout presets">
+                <button type="button" data-liz="1">1 LIZ</button>
+                <button type="button" data-liz="2">2 LIZs</button>
+              </div>
+            </div>
+            <div id="track" class="track" aria-label="Preview of zones in order"></div>
+            <label>Zone type and capacity
+              <input class="mono" id="zones" spellcheck="false" required aria-describedby="zone-help">
+            </label>
+            <p id="zone-help" class="hint">List zones from left to right. T = staging, M = memory, L = laser interaction.</p>
+            <details class="placement">
+              <summary>Initial ion placement<span id="placement-mode">Automatic</span></summary>
+              <div class="details-body">
+                <p class="hint" id="ion-ids"></p>
+                <label>Starting chains
+                  <textarea id="chains" class="mono" rows="3" spellcheck="false" placeholder="1: 0 1 2 3 9&#10;5: 4 5 6 7 8" aria-describedby="chains-help"></textarea>
+                </label>
+                <p id="chains-help" class="hint">Use one line per occupied zone, with ion IDs in chain order. Leave blank for automatic placement.</p>
+              </div>
+            </details>
+          </section>
+          <div class="panel calibration">
+            <details>
+              <summary>Operation timings<span>µs</span></summary>
+              <div class="details-body fields" id="timing-fields"></div>
+            </details>
+            <details>
+              <summary>Motional heating and cooling<span>Phonons</span></summary>
+              <div class="details-body">
+                <p class="hint">Blank transverse 2 values use transverse 1. Background rates are in quanta/s.</p>
+                <div id="thermal-fields"></div>
+                <h3>Cooling policy</h3>
+                <div class="fields">
+                  <label>MS cooling threshold<input id="threshold" type="number" min="0" step="any" placeholder="Off"></label>
+                  <label>After-measurement cooling (µs)<input id="after-measure" type="number" min="0" step="any" placeholder="Off"></label>
+                  <label>Resident coolant IDs<input id="coolants" class="mono" spellcheck="false" placeholder="None"></label>
+                  <label>Resident re-cooling (µs)<input id="recool" type="number" min="0" step="any" placeholder="Off"></label>
+                </div>
+                <p class="hint">Resident coolants are available for single-LIZ layouts.</p>
+              </div>
+            </details>
+            <details>
+              <summary>Noise calibration<span>Gate and idle errors</span></summary>
+              <div class="details-body">
+                <p class="hint">Enter error probabilities as fractions, such as 0.0032 for 0.32%.</p>
+                <div id="noise-fields" class="fields"></div>
+                <div class="fields lookup">
+                  <label>MS lookup rule
+                    <select id="lookup-mode">
+                      <option value="strict">Round up</option>
+                      <option value="round_off">Nearest</option>
+                      <option value="optimistic">Round down</option>
+                    </select>
+                  </label>
+                  <label>MS calibration CSV<input id="lookup-file" type="file" accept=".csv,text/csv" aria-describedby="lookup-help"></label>
+                </div>
+                <p id="lookup-help" class="hint">The built-in table is used by default. A custom CSV uses n_bar, pauli, and probability columns.</p>
+              </div>
+            </details>
+          </div>
+          <div class="actions">
+            <button id="run" class="primary" type="submit">Run simulation</button>
+            <button id="reset-defaults" type="button" class="secondary">Reset defaults</button>
+          </div>
+        </fieldset>
+        <p id="status" class="status" role="status" aria-live="polite">Loading hardware defaults…</p>
+      </form>
+      <form id="uniform-settings" hidden></form>
+
+      <section class="panel results" aria-labelledby="results-heading">
+        <header class="results-header">
+          <div>
+            <h2 id="results-heading">Detector correlation</h2>
+            <p id="result-caption">Stabilizer blocks with rounds inside each block</p>
+          </div>
+          <div class="exports" aria-label="Result actions">
+            <button type="button" id="save-png" disabled>PNG</button>
+            <button type="button" id="save-csv" title="All detectors in Stim order" disabled>CSV</button>
+            <button type="button" id="save-stim" disabled>Stim</button>
+            <button type="button" id="save-dem" hidden>DEM</button>
+            <button type="button" id="open-circuit" disabled>Circuit</button>
+          </div>
+        </header>
+        <dl id="metrics" class="metrics" hidden>
+          <div><dt>Detectors</dt><dd id="detectors"></dd></div>
+          <div><dt>Shots</dt><dd id="sampled"></dd></div>
+          <div id="round-duration"><dt>Mean round time</dt><dd id="round-time"></dd></div>
+        </dl>
+        <div id="plot-area" class="plot-area" hidden>
+          <canvas id="heatmap" width="768" height="670" role="img" aria-label="Heatmap of signed pairwise detector correlations"></canvas>
+          <p id="pair-info" class="pair-info" aria-live="off">Point at or tap a cell to inspect its detector pair.</p>
+          <p class="plot-note">Rounds progress within each block. The plot omits final data readout. Round 1 X-check slots have no detector.</p>
+        </div>
+        <div id="empty" class="empty">
+          <div class="empty-plot" aria-hidden="true"></div>
+          <p id="empty-message">Run a simulation to generate the detector matrix.</p>
+        </div>
+        <p id="lookup-warning" class="status warning" hidden></p>
+        <details id="circuit-inspector" hidden>
+          <summary>Circuit inspector</summary>
+          <div class="details-body">
+            <div class="inspector-controls">
+              <label>View
+                <select id="circuit-view">
+                  <option value="diagram">Check circuit diagram</option>
+                  <option value="schedule">QCCD schedule</option>
+                  <option value="logical_stim">Logical Stim</option>
+                  <option value="stim">Noisy Stim</option>
+                  <option value="dem" hidden>Detector error model</option>
+                </select>
+              </label>
+              <label id="circuit-round-control">Round<select id="circuit-round"></select></label>
+              <label id="circuit-check-control">Stabilizer check<select id="circuit-check"></select></label>
+            </div>
+            <p id="circuit-info" class="hint"></p>
+            <div id="circuit-diagram" class="circuit-diagram" tabindex="0" aria-label="Logical gates for this check"></div>
+            <pre id="circuit-source" class="circuit-source mono" tabindex="0" aria-label="Circuit instructions" hidden></pre>
+          </div>
+        </details>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

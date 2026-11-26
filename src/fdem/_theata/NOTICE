@@ -1,0 +1,7 @@
+This distribution contains portions of THeatA (Transport- and Heating-aware
+QEC Simulation for 1D QCCD Trapped-Ion Systems) under the Apache License,
+Version 2.0. The license text is provided in this directory.
+
+The bundled compiler and circuit schedules are based on THeatA revision
+8bfb9b9 and the accompanying workbench changes. Compiler imports were adapted
+to the package layout. The frontend is bundled with a separate local launcher.
