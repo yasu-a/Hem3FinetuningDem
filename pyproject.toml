@@ -9,6 +9,7 @@ description = "Estimate rotated surface-code logical error rates from Stim detec
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "lark>=1.1,<2",
     "matplotlib>=3.9,<4",
     "numpy>=1.26",
     "pymatching>=2.3,<3",
@@ -19,6 +20,11 @@ dependencies = [
 
 [project.scripts]
 fdem = "fdem.__main__:main"
+fdem-web = "fdem.web:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+fdem = ["web_assets/*.html", "web_assets/*.js", "web_assets/*.css"]
+"fdem._theata" = ["*.csv", "LICENSE", "NOTICE"]
