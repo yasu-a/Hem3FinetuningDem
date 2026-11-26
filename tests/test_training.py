@@ -5,7 +5,6 @@ import pytest
 import stim
 
 from fdem.__main__ import (
-    build_candidate_dem,
     parse_arguments,
     train_dem_with_cobyla,
     train_dem_with_pair_least_squares,
@@ -35,67 +34,6 @@ def test_training_method_can_be_selected_from_command_line(
     arguments = parse_arguments()
 
     assert arguments.training_method == expected_method
-
-
-def test_candidate_dem_contains_all_single_and_pair_mechanisms() -> None:
-    """The generic candidate covers every detector and unordered detector pair."""
-    dem = build_candidate_dem(
-        detector_count=4,
-        observable_count=1,
-        initial_prior=0.01,
-    )
-    errors = [instruction for instruction in dem if instruction.type == "error"]
-    detector_target_counts = [
-        sum(target.is_relative_detector_id() for target in instruction.targets_copy())
-        for instruction in errors
-    ]
-
-    assert len(errors) == 10
-    assert detector_target_counts.count(1) == 4
-    assert detector_target_counts.count(2) == 6
-    assert all(instruction.args_copy() == [0.01] for instruction in errors)
-    assert dem.num_detectors == 4
-    assert dem.num_observables == 1
-
-
-def test_candidate_dem_logical_targets_follow_fixed_detector_cut() -> None:
-    """Logical targets mark singleton endpoints and pairs crossing the fixed cut."""
-    dem = build_candidate_dem(
-        detector_count=4,
-        observable_count=1,
-        initial_prior=0.01,
-    )
-    errors = [instruction for instruction in dem if instruction.type == "error"]
-    errors_with_logical_target = [
-        instruction
-        for instruction in errors
-        if any(
-            target.is_logical_observable_id()
-            for target in instruction.targets_copy()
-        )
-    ]
-
-    assert len(errors_with_logical_target) == 6
-
-
-@pytest.mark.parametrize(
-    ("detector_count", "observable_count", "initial_prior"),
-    [
-        (1, 1, 0.01),
-        (2, 0, 0.01),
-        (2, 1, 0.0),
-        (2, 1, 0.5),
-        (2, 1, np.nan),
-    ],
-)
-def test_candidate_dem_rejects_invalid_settings(
-    detector_count: int,
-    observable_count: int,
-    initial_prior: float,
-) -> None:
-    """Invalid dimensions and probabilities cannot define a candidate DEM."""
-    with pytest.raises(ValueError):
-        build_candidate_dem(detector_count, observable_count, initial_prior)
 
 
 def test_training_callback_reports_combined_loss_components() -> None:
@@ -158,7 +96,16 @@ def test_training_callback_reports_combined_loss_components() -> None:
 
 def test_pair_least_squares_training_fits_observed_correlations() -> None:
     """The direct trainer fits pair correlations and reports its single RMSE."""
-    initial_dem = build_candidate_dem(3, 1, 0.01)
+    initial_dem = stim.DetectorErrorModel(
+        """
+        error(0.01) D0
+        error(0.01) D1
+        error(0.01) D2 L0
+        error(0.01) D0 D1
+        error(0.01) D0 D2 L0
+        error(0.01) D1 D2 L0
+        """
+    )
     patterns = [[0, 0, 0], [1, 1, 0], [1, 1, 1], [0, 0, 1]]
     physical_syndromes = np.repeat(patterns, [105, 15, 7, 1], axis=0)
     reported: list[tuple[int, dict[str, float]]] = []

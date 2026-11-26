@@ -4,12 +4,12 @@ A minimal example that estimates the logical error rate (LER) of a rotated surfa
 code from syndrome samples produced by a noisy circuit exported by the THeatA
 workbench.
 
-The device module exposes sampled detector events instead of its circuit or DEM. The
-training program constructs a generic graphlike candidate DEM containing every
-single-detector and two-detector error pattern, then optimizes those probabilities
-against the RMSE of the sampled pair correlations. Logical targets use fixed
-detector-index cuts because syndrome statistics alone cannot identify which error
-patterns flip a logical observable.
+The device module exposes sampled detector events and a reference DEM. To build the
+reference, it removes all noise from the experiment circuit, adds uniform gate, reset,
+and measurement noise, and asks Stim to derive the DEM. This uses the QEC circuit
+structure without using the physical device's noise model. The training program then
+optimizes the reference DEM probabilities against the RMSE of the sampled pair
+correlations.
 
 Place each exported circuit in a directory named after the experiment. The circuit
 must use the fixed filename `circuit.stim`.
@@ -36,8 +36,9 @@ least squares in parity log-rate space, select `pair-lsq`:
 python -m fdem --experiment d3-r3-default --training-method pair-lsq
 ```
 
-The direct pair fit does not update single-detector mechanisms because they do not
-appear in detector-pair statistics.
+Both methods start from the same uniformly noisy reference DEM. The direct pair fit
+does not update single-detector mechanisms because they do not appear in detector-pair
+statistics.
 
 The generated figures are saved as `var/d3-r3-default/loss.png` and
 `var/d3-r3-default/ler.png`.

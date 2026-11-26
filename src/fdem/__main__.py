@@ -11,7 +11,7 @@ from scipy.optimize import minimize
 from tqdm import tqdm
 
 from .dem import with_priors
-from .device import sample_physical_device_syndromes
+from .device import get_reference_dem, sample_physical_device_syndromes
 from .pij import dem_pair_probabilities, fit_dem_from_pij
 from .plot import save_ler_plot, save_loss_plot
 from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
@@ -22,7 +22,7 @@ SHOTS = 100_000
 MODEL_SHOTS = 10_000
 OPTIMIZATION_STEPS = 300
 LEARNING_RATE = 0.0001
-INITIAL_PRIOR = 0.001
+REFERENCE_ERROR_PROBABILITY = 0.001
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
 RESULTS_DIRECTORY = Path("var")
@@ -48,81 +48,6 @@ def parse_arguments() -> argparse.Namespace:
         help="DEM probability fitting method (default: cobyla)",
     )
     return parser.parse_args()
-
-
-def build_candidate_dem(
-    detector_count: int,
-    observable_count: int,
-    initial_prior: float,
-) -> stim.DetectorErrorModel:
-    """Build a generic graphlike DEM without inspecting the physical-device circuit.
-
-    The candidate structure contains one error mechanism for each detector and one for
-    every unordered detector pair. Logical targets are assigned using fixed cuts in
-    detector-index order. These cuts make the model decodable but are only an ansatz;
-    syndrome statistics cannot determine logical-observable targets.
-
-    Args:
-        detector_count: Number of detectors in the sampled syndrome data.
-        observable_count: Number of logical observables in the evaluation data.
-        initial_prior: Initial probability assigned to every candidate mechanism.
-
-    Returns:
-        A graphlike detector error model with fixed single-detector and detector-pair
-        mechanisms.
-
-    Raises:
-        ValueError: If fewer than two detectors or one observable are requested, or if
-            the initial prior is not a finite probability below 0.5.
-    """
-    if detector_count < 2:
-        raise ValueError("Candidate DEM requires at least two detectors")
-    if observable_count < 1:
-        raise ValueError("Candidate DEM requires at least one observable")
-    if not np.isfinite(initial_prior) or not 0 < initial_prior < 0.5:
-        raise ValueError("Initial prior must be finite and between 0 and 0.5")
-
-    logical_cuts = [
-        (observable + 1) * detector_count // (observable_count + 1)
-        for observable in range(observable_count)
-    ]
-    dem = stim.DetectorErrorModel()
-
-    def logical_targets(left: int, right: int | None = None) -> list[stim.DemTarget]:
-        """Return logical targets crossed by a candidate error mechanism.
-
-        Args:
-            left: Index of the first detector endpoint.
-            right: Index of the second endpoint, or the implicit boundary for a
-                single-detector mechanism.
-
-        Returns:
-            Logical-observable targets crossed by the mechanism.
-        """
-        return [
-            stim.target_logical_observable_id(observable)
-            for observable, cut in enumerate(logical_cuts)
-            if (
-                (left >= cut)
-                if right is None
-                else ((left >= cut) != (right >= cut))
-            )
-        ]
-
-    for detector in range(detector_count):
-        targets = [stim.target_relative_detector_id(detector)]
-        targets.extend(logical_targets(detector))
-        dem.append("error", initial_prior, targets, tag="candidate_single")
-
-    for left in range(detector_count):
-        for right in range(left + 1, detector_count):
-            targets = [
-                stim.target_relative_detector_id(left),
-                stim.target_relative_detector_id(right),
-            ]
-            targets.extend(logical_targets(left, right))
-            dem.append("error", initial_prior, targets, tag="candidate_pair")
-    return dem
 
 
 def logical_error_rate(
@@ -298,12 +223,15 @@ def main() -> None:
     print(f"detectors = {syndrome_samples.shape[1]}")
     print(f"observables = {actual_observables.shape[1]}")
 
-    # 2. Build a generic candidate DEM from sample dimensions, not from the device.
-    initial_dem = build_candidate_dem(
-        syndrome_samples.shape[1],
-        actual_observables.shape[1],
-        INITIAL_PRIOR,
+    # 2. Build the reference DEM from ideal circuit structure and uniform noise.
+    initial_dem = get_reference_dem(
+        arguments.experiment,
+        error_probability=REFERENCE_ERROR_PROBABILITY,
     )
+    if initial_dem.num_detectors != syndrome_samples.shape[1]:
+        raise ValueError("Reference DEM and device detector counts must match")
+    if initial_dem.num_observables != actual_observables.shape[1]:
+        raise ValueError("Reference DEM and device observable counts must match")
     error_instructions = [
         instruction for instruction in initial_dem if instruction.type == "error"
     ]

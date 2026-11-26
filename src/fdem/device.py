@@ -7,6 +7,12 @@ import stim
 
 
 _CIRCUIT_FILENAME = "circuit.stim"
+_Z_RESETS = {"R", "RZ"}
+_X_RESETS = {"RX"}
+_Z_MEASUREMENTS = {"M", "MZ"}
+_X_MEASUREMENTS = {"MX"}
+_Z_MEASURE_RESETS = {"MR", "MRZ"}
+_X_MEASURE_RESETS = {"MRX"}
 
 
 def _load_physical_device_circuit(
@@ -49,6 +55,158 @@ def _load_physical_device_circuit(
     if circuit.num_observables == 0:
         raise ValueError("Experiment circuit must define at least one observable")
     return circuit
+
+
+def _qubit_targets(instruction: stim.CircuitInstruction) -> list[int]:
+    """Return the direct qubit targets of a circuit instruction.
+
+    Args:
+        instruction: Stim circuit instruction to inspect.
+
+    Returns:
+        Qubit indices in instruction target order. Non-qubit targets are omitted.
+    """
+    return [
+        target.qubit_value
+        for target in instruction.targets_copy()
+        if target.is_qubit_target
+    ]
+
+
+def _append_error(
+    circuit: stim.Circuit,
+    name: str,
+    probability: float,
+    targets: list[int],
+) -> None:
+    """Append an error instruction when it has at least one target.
+
+    Args:
+        circuit: Circuit receiving the error instruction.
+        name: Stim error instruction name.
+        probability: Error probability supplied to Stim.
+        targets: Qubits affected by the error.
+
+    Returns:
+        None.
+    """
+    if targets:
+        circuit.append(name, targets, probability)
+
+
+def _add_uniform_noise(
+    ideal_circuit: stim.Circuit,
+    error_probability: float,
+) -> stim.Circuit:
+    """Add uniform gate, reset, and measurement noise to an ideal circuit.
+
+    Repeat blocks and noiseless structural instructions are preserved. Z- and X-basis
+    measure-reset instructions receive measurement noise before the instruction and
+    reset noise after it.
+
+    Args:
+        ideal_circuit: Circuit whose existing noise has already been removed.
+        error_probability: Probability used by every inserted noise instruction.
+
+    Returns:
+        A copy of the ideal circuit with the uniform noise model inserted.
+    """
+    noisy_circuit = stim.Circuit()
+    for operation in ideal_circuit:
+        if isinstance(operation, stim.CircuitRepeatBlock):
+            noisy_body = _add_uniform_noise(
+                operation.body_copy(),
+                error_probability,
+            )
+            noisy_circuit.append(
+                stim.CircuitRepeatBlock(operation.repeat_count, noisy_body)
+            )
+            continue
+
+        name = operation.name
+        targets = _qubit_targets(operation)
+        if name in _Z_MEASURE_RESETS:
+            _append_error(noisy_circuit, "X_ERROR", error_probability, targets)
+            noisy_circuit.append(operation)
+            _append_error(noisy_circuit, "X_ERROR", error_probability, targets)
+        elif name in _X_MEASURE_RESETS:
+            _append_error(noisy_circuit, "Z_ERROR", error_probability, targets)
+            noisy_circuit.append(operation)
+            _append_error(noisy_circuit, "Z_ERROR", error_probability, targets)
+        elif name in _Z_MEASUREMENTS:
+            _append_error(noisy_circuit, "X_ERROR", error_probability, targets)
+            noisy_circuit.append(operation)
+        elif name in _X_MEASUREMENTS:
+            _append_error(noisy_circuit, "Z_ERROR", error_probability, targets)
+            noisy_circuit.append(operation)
+        elif name in _Z_RESETS:
+            noisy_circuit.append(operation)
+            _append_error(noisy_circuit, "X_ERROR", error_probability, targets)
+        elif name in _X_RESETS:
+            noisy_circuit.append(operation)
+            _append_error(noisy_circuit, "Z_ERROR", error_probability, targets)
+        else:
+            noisy_circuit.append(operation)
+            gate = stim.gate_data(name)
+            if gate.is_unitary and gate.is_single_qubit_gate:
+                _append_error(
+                    noisy_circuit,
+                    "DEPOLARIZE1",
+                    error_probability,
+                    targets,
+                )
+            elif gate.is_unitary and gate.is_two_qubit_gate:
+                quantum_pairs = [
+                    [target.qubit_value for target in group]
+                    for group in operation.target_groups()
+                    if all(target.is_qubit_target for target in group)
+                ]
+                _append_error(
+                    noisy_circuit,
+                    "DEPOLARIZE2",
+                    error_probability,
+                    [qubit for pair in quantum_pairs for qubit in pair],
+                )
+    return noisy_circuit
+
+
+def get_reference_dem(
+    experiment_name: str,
+    error_probability: float = 0.001,
+    *,
+    experiments_directory: Path = Path("experiments"),
+) -> stim.DetectorErrorModel:
+    """Build a reference DEM from circuit structure and uniform artificial noise.
+
+    All physical-device noise is removed before the uniform noise model is inserted.
+    Consequently, the original noise types, locations, and probabilities do not affect
+    the returned detector error model.
+
+    Args:
+        experiment_name: Name of one direct child of the experiments directory.
+        error_probability: Probability used for all artificial physical errors.
+        experiments_directory: Root directory containing experiment directories.
+
+    Returns:
+        A flattened detector error model generated from the uniformly noisy reference
+        circuit.
+
+    Raises:
+        ValueError: If the probability is invalid, the experiment name is unsafe, or
+            the circuit does not define detectors and at least one observable.
+        FileNotFoundError: If the experiment circuit does not exist.
+    """
+    if not np.isfinite(error_probability) or not 0 <= error_probability <= 1:
+        raise ValueError("Error probability must be finite and between 0 and 1")
+    physical_circuit = _load_physical_device_circuit(
+        experiment_name,
+        experiments_directory,
+    )
+    ideal_circuit = physical_circuit.without_noise()
+    reference_circuit = _add_uniform_noise(ideal_circuit, error_probability)
+    return reference_circuit.detector_error_model(
+        decompose_errors=True
+    ).flattened()
 
 
 def sample_physical_device_syndromes(
