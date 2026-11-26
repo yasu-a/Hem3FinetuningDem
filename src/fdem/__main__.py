@@ -22,6 +22,7 @@ from .pij import (
     pair_probability_mse_and_gradient,
 )
 from .plot import (
+    save_correlation_heatmaps,
     save_ler_plot,
     save_loss_plot,
     save_pair_loss_plot,
@@ -485,6 +486,9 @@ def main() -> None:
     ler_plot_path = experiment_results_directory / "ler.png"
     single_loss_plot_path = experiment_results_directory / "single_loss.png"
     pair_loss_plot_path = experiment_results_directory / "pair_loss.png"
+    correlation_heatmap_path = (
+        experiment_results_directory / "correlation_heatmaps.png"
+    )
     print(f"experiment = {arguments.experiment}")
     print(f"training method = {arguments.training_method}")
 
@@ -639,14 +643,21 @@ def main() -> None:
 
     # 4. Evaluate the optimized decoder on the same fixed data.
     optimized_ler = logical_error_rate(optimized_dem, detector_samples, actual_observables)
+    optimized_dem_correlations = dem_pair_probabilities(optimized_dem)
     optimized_metrics = statistics_calculator.metrics(
         syndrome_correlations,
-        dem_pair_probabilities(optimized_dem),
+        optimized_dem_correlations,
     )
     prior_summary = prior_change_summary(initial_dem, optimized_dem)
     save_loss_plot(combined_rmse_history, loss_plot_path)
     save_single_loss_plot(single_rmse_history, single_loss_plot_path)
     save_pair_loss_plot(pair_rmse_history, pair_loss_plot_path)
+    save_correlation_heatmaps(
+        syndrome_correlations,
+        initial_dem_correlations,
+        optimized_dem_correlations,
+        correlation_heatmap_path,
+    )
     save_ler_plot(
         ler_history,
         initial_ler,
@@ -689,6 +700,7 @@ def main() -> None:
     print(f"loss plot = {loss_plot_path}")
     print(f"single RMSE plot = {single_loss_plot_path}")
     print(f"pair RMSE plot = {pair_loss_plot_path}")
+    print(f"correlation heatmaps = {correlation_heatmap_path}")
     print(f"LER plot = {ler_plot_path}")
 
 

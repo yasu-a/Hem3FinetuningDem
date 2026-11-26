@@ -3,9 +3,109 @@
 from pathlib import Path
 
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import AsinhNorm
+
+
+def save_correlation_heatmaps(
+    device_correlations: np.ndarray,
+    initial_correlations: np.ndarray,
+    optimized_correlations: np.ndarray,
+    output_path: Path,
+) -> None:
+    """Save device, initial, and optimized correlation matrices side by side.
+
+    A shared zero-centered asinh color scale makes values directly comparable across
+    all three panels while preserving small pair correlations beside larger diagonal
+    firing probabilities. Matrix diagonals contain single-detector firing probabilities
+    and off-diagonal entries contain detector-pair correlations.
+
+    Args:
+        device_correlations: Correlations estimated from device syndrome samples.
+        initial_correlations: Correlations calculated analytically from the initial DEM.
+        optimized_correlations: Correlations calculated analytically from the optimized
+            DEM.
+        output_path: Output path for the generated figure.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If the matrices are not same-shaped square matrices or contain no
+            finite values.
+    """
+    matrices = (
+        device_correlations,
+        initial_correlations,
+        optimized_correlations,
+    )
+    shape = device_correlations.shape
+    if device_correlations.ndim != 2 or shape[0] != shape[1]:
+        raise ValueError("Correlation heatmaps require square matrices")
+    if any(matrix.shape != shape for matrix in matrices[1:]):
+        raise ValueError("Correlation heatmap matrices must have the same shape")
+    finite_values = np.concatenate(
+        [matrix[np.isfinite(matrix)] for matrix in matrices]
+    )
+    if finite_values.size == 0:
+        raise ValueError("Correlation heatmaps require at least one finite value")
+    color_limit = float(np.max(np.abs(finite_values)))
+    if color_limit == 0:
+        color_limit = 1.0
+    off_diagonal = ~np.eye(shape[0], dtype=bool)
+    finite_pair_values = np.concatenate(
+        [
+            matrix[off_diagonal & np.isfinite(matrix)]
+            for matrix in matrices
+        ]
+    )
+    pair_limit = (
+        float(np.max(np.abs(finite_pair_values)))
+        if finite_pair_values.size > 0
+        else 0.0
+    )
+    linear_width = (
+        pair_limit * 0.05
+        if pair_limit > 0
+        else color_limit * 0.05
+    )
+    color_norm = AsinhNorm(
+        linear_width=linear_width,
+        vmin=-color_limit,
+        vmax=color_limit,
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure, axes = plt.subplots(
+        1,
+        3,
+        figsize=(8.0, 2.8),
+        sharex=True,
+        sharey=True,
+        constrained_layout=True,
+    )
+    titles = ("Device", "Initial DEM", "Optimized DEM")
+    image = None
+    for axes_item, matrix, title in zip(axes, matrices, titles):
+        image = axes_item.imshow(
+            matrix,
+            cmap="RdBu_r",
+            norm=color_norm,
+            interpolation="nearest",
+        )
+        axes_item.set_title(title, fontsize=12)
+        axes_item.set_xlabel("Detector", fontsize=10)
+        axes_item.tick_params(labelsize=9)
+    axes[0].set_ylabel("Detector", fontsize=10)
+    colorbar = figure.colorbar(image, ax=axes, shrink=0.82, label="Correlation")
+    colorbar_ticks = [-color_limit, -linear_width, 0.0, linear_width, color_limit]
+    colorbar.set_ticks(colorbar_ticks)
+    colorbar.set_ticklabels([f"{value:.3g}" for value in colorbar_ticks])
+    figure.savefig(output_path, dpi=150)
+    plt.close(figure)
 
 
 def save_loss_plot(

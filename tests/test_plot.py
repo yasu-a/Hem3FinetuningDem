@@ -3,14 +3,55 @@
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from fdem.plot import (
+    save_correlation_heatmaps,
     save_ler_plot,
     save_loss_plot,
     save_pair_loss_plot,
     save_single_loss_plot,
 )
+
+
+def test_correlation_heatmaps_save_three_comparable_matrices(tmp_path: Path) -> None:
+    """The correlation heatmap accepts device, initial, and optimized matrices."""
+    output_path = tmp_path / "correlation_heatmaps.png"
+    device = np.array([[0.2, 0.03], [0.03, 0.1]])
+    initial = np.array([[0.1, 0.01], [0.01, 0.08]])
+    optimized = np.array([[0.18, 0.025], [0.025, 0.09]])
+
+    save_correlation_heatmaps(device, initial, optimized, output_path)
+
+    assert output_path.is_file()
+    assert output_path.stat().st_size > 0
+
+
+def test_correlation_heatmaps_reject_mismatched_shapes(tmp_path: Path) -> None:
+    """The correlation heatmap rejects matrices that cannot be compared by detector."""
+    square = np.zeros((2, 2))
+
+    with pytest.raises(ValueError, match="same shape"):
+        save_correlation_heatmaps(
+            square,
+            np.zeros((3, 3)),
+            square,
+            tmp_path / "correlation_heatmaps.png",
+        )
+
+
+def test_correlation_heatmaps_reject_all_nonfinite_values(tmp_path: Path) -> None:
+    """The correlation heatmap rejects input with no displayable values."""
+    undefined = np.full((2, 2), np.nan)
+
+    with pytest.raises(ValueError, match="finite value"):
+        save_correlation_heatmaps(
+            undefined,
+            undefined,
+            undefined,
+            tmp_path / "correlation_heatmaps.png",
+        )
 
 
 def test_loss_plot_saves_rmse_history(tmp_path: Path) -> None:

@@ -61,8 +61,11 @@ The generated figures are grouped by training method and weight selection. For e
 the default method saves the combined RMSE as
 `var/d3-r3-default/cobyla/weight-auto/loss.png`, the separate single-detector and
 detector-pair histories as `single_loss.png` and `pair_loss.png`, and the
-logical-error-rate history as `ler.png` in the same directory. A manual weight of 100
-uses the directory `weight-100`.
+logical-error-rate history as `ler.png` in the same directory. The side-by-side device,
+initial-DEM, and optimized-DEM correlation matrices are saved as
+`correlation_heatmaps.png` using a shared zero-centered asinh color scale and a
+red-white-blue diverging color map. A manual weight of 100 uses the directory
+`weight-100`.
 
 For PowerShell, activate the environment with `.\.venv\Scripts\Activate.ps1`.
 
