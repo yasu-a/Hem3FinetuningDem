@@ -28,6 +28,14 @@ python -m pip install -e .
 python -m fdem --experiment d3-r3-default
 ```
 
+By default, `--pair-loss-weight auto` balances the initial single-detector and
+detector-pair MSE contributions. Supply a positive number to run with a fixed manual
+weight instead:
+
+```console
+python -m fdem --experiment d3-r3-default --pair-loss-weight 100
+```
+
 The loss independently normalizes detector firing-rate MSE and off-diagonal
 pair-correlation MSE, then adds them with a configurable pair weight. The default
 `cobyla` method repeatedly samples the candidate DEM and minimizes the resulting
@@ -49,10 +57,12 @@ All methods start from the same uniformly noisy reference DEM. Detector firing r
 occupy the diagonal of the correlation matrix, allowing the direct fit and gradient
 descent to update single-detector mechanisms as well as pair-visible mechanisms.
 
-The generated figures are grouped by training method. For example, the default method
-saves the combined RMSE as `var/d3-r3-default/cobyla/loss.png`, the separate
-single-detector and detector-pair histories as `single_loss.png` and `pair_loss.png`,
-and the logical-error-rate history as `ler.png` in the same directory.
+The generated figures are grouped by training method and weight selection. For example,
+the default method saves the combined RMSE as
+`var/d3-r3-default/cobyla/weight-auto/loss.png`, the separate single-detector and
+detector-pair histories as `single_loss.png` and `pair_loss.png`, and the
+logical-error-rate history as `ler.png` in the same directory. A manual weight of 100
+uses the directory `weight-100`.
 
 For PowerShell, activate the environment with `.\.venv\Scripts\Activate.ps1`.
 

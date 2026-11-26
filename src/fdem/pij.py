@@ -285,7 +285,7 @@ def fit_dem_from_pij(
         weighted_design,
         weighted_target,
         bounds=(-prior, np.inf),
-        tol=1e-12,
+        tol=1e-7,
     )
     if not result.success:
         raise RuntimeError(f"Pair-probability fit failed: {result.message}")

@@ -6,8 +6,10 @@ import stim
 
 from fdem.__main__ import (
     parse_arguments,
+    pair_loss_weight_directory,
     prior_change_summary,
     record_rmse_metrics,
+    resolve_pair_loss_weight,
     train_dem_with_cobyla,
     train_dem_with_gradient_descent,
     train_dem_with_least_squares,
@@ -41,6 +43,87 @@ def test_training_method_can_be_selected_from_command_line(
     arguments = parse_arguments()
 
     assert arguments.training_method == expected_method
+    assert arguments.pair_loss_weight == "auto"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("auto", "auto"), ("1", 1.0), ("275.5", 275.5)],
+)
+def test_pair_loss_weight_accepts_auto_or_positive_number(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+    expected: str | float,
+) -> None:
+    """The command line accepts automatic and positive manual pair weights."""
+    monkeypatch.setattr(
+        "sys.argv",
+        ["fdem", "--experiment", "sample", "--pair-loss-weight", value],
+    )
+
+    arguments = parse_arguments()
+
+    assert arguments.pair_loss_weight == expected
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "invalid"])
+def test_pair_loss_weight_rejects_invalid_command_line_value(
+    monkeypatch: pytest.MonkeyPatch,
+    value: str,
+) -> None:
+    """The command line rejects nonpositive, nonfinite, and nonnumeric weights."""
+    monkeypatch.setattr(
+        "sys.argv",
+        ["fdem", "--experiment", "sample", "--pair-loss-weight", value],
+    )
+
+    with pytest.raises(SystemExit):
+        parse_arguments()
+
+
+def test_auto_pair_loss_weight_balances_initial_mse() -> None:
+    """Automatic weighting makes initial single and weighted pair MSE equal."""
+    single_rmse = 0.136
+    pair_rmse = 0.0082
+
+    mode, weight = resolve_pair_loss_weight("auto", single_rmse, pair_rmse)
+
+    assert mode == "auto"
+    assert weight == pytest.approx(single_rmse**2 / pair_rmse**2)
+    assert weight * pair_rmse**2 == pytest.approx(single_rmse**2)
+
+
+def test_manual_pair_loss_weight_is_preserved() -> None:
+    """A positive manual weight is returned without data-dependent changes."""
+    mode, weight = resolve_pair_loss_weight(10.0, 0.2, 0.01)
+
+    assert mode == "manual"
+    assert weight == 10.0
+
+
+@pytest.mark.parametrize(
+    ("single_rmse", "pair_rmse"),
+    [(0.0, 0.1), (0.1, 0.0), (np.nan, 0.1), (0.1, np.inf)],
+)
+def test_auto_pair_loss_weight_rejects_invalid_initial_mse(
+    single_rmse: float,
+    pair_rmse: float,
+) -> None:
+    """Automatic weighting rejects zero or nonfinite initial MSE components."""
+    with pytest.raises(ValueError):
+        resolve_pair_loss_weight("auto", single_rmse, pair_rmse)
+
+
+@pytest.mark.parametrize(
+    ("requested_weight", "expected_directory"),
+    [("auto", "weight-auto"), (1.0, "weight-1"), (100.0, "weight-100")],
+)
+def test_pair_loss_weight_uses_distinct_result_directory(
+    requested_weight: str | float,
+    expected_directory: str,
+) -> None:
+    """Automatic and manual selections produce stable weight directories."""
+    assert pair_loss_weight_directory(requested_weight) == expected_directory
 
 
 def test_rmse_histories_record_initial_and_objective_metrics() -> None:
@@ -78,6 +161,7 @@ def test_training_callback_reports_combined_loss_components() -> None:
     )
     physical_syndromes, _, _ = initial_dem.compile_sampler(seed=1).sample(1_000)
     reported_metrics: list[dict[str, float]] = []
+    pair_loss_weight = 7.0
 
     def record_metrics(
         evaluation: int,
@@ -101,7 +185,7 @@ def test_training_callback_reports_combined_loss_components() -> None:
     _, loss_history = train_dem_with_cobyla(
         initial_dem,
         physical_syndromes,
-        DetectorCombinedStatistics(),
+        DetectorCombinedStatistics(pair_loss_weight),
         steps=3,
         model_shots=1_000,
         learning_rate=0.0001,
@@ -122,6 +206,14 @@ def test_training_callback_reports_combined_loss_components() -> None:
             "rmse",
             "loss",
         }
+        for metrics in reported_metrics
+    )
+    assert all(
+        metrics["loss"] ** 2
+        == pytest.approx(
+            metrics["single_rmse"] ** 2
+            + pair_loss_weight * metrics["pair_rmse"] ** 2
+        )
         for metrics in reported_metrics
     )
 

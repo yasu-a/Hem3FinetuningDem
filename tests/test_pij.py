@@ -147,3 +147,27 @@ def test_pair_probability_gradient_matches_central_difference() -> None:
 
     np.testing.assert_allclose(analytic, numerical, rtol=1e-6, atol=1e-9)
     assert analytic[-1] != 0
+
+
+def test_unit_pair_weight_matches_default_loss_and_gradient() -> None:
+    """An explicit unit pair weight preserves the default loss and gradient."""
+    dem = stim.DetectorErrorModel(
+        """
+        error(0.08) D0
+        error(0.04) D0 D1
+        """
+    )
+    observed = np.array([[0.15, 0.1], [0.1, 0.12]])
+
+    default_loss, default_gradient = pair_probability_mse_and_gradient(
+        dem,
+        observed,
+    )
+    weighted_loss, weighted_gradient = pair_probability_mse_and_gradient(
+        dem,
+        observed,
+        1.0,
+    )
+
+    assert weighted_loss == pytest.approx(default_loss)
+    np.testing.assert_allclose(weighted_gradient, default_gradient)

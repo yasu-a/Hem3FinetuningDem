@@ -37,11 +37,38 @@ OPTIMIZATION_STEPS = 2000
 LEARNING_RATE = 0.0001
 GRADIENT_LEARNING_RATE = 0.1
 REFERENCE_ERROR_PROBABILITY = 0.001
-PAIR_LOSS_WEIGHT = 1.0
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
 RESULTS_DIRECTORY = Path("var")
 TRAINING_METHODS = ("cobyla", "lsq", "gradient-descent")
+
+
+def parse_pair_loss_weight(value: str) -> str | float:
+    """Parse an automatic or positive manual pair-loss weight.
+
+    Args:
+        value: Command-line value, either ``auto`` or a numeric string.
+
+    Returns:
+        ``auto`` or the parsed positive finite weight.
+
+    Raises:
+        argparse.ArgumentTypeError: If the value is neither ``auto`` nor a positive
+            finite number.
+    """
+    if value == "auto":
+        return value
+    try:
+        weight = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "Pair loss weight must be 'auto' or a positive finite number"
+        ) from error
+    if not np.isfinite(weight) or weight <= 0:
+        raise argparse.ArgumentTypeError(
+            "Pair loss weight must be 'auto' or a positive finite number"
+        )
+    return weight
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -62,7 +89,73 @@ def parse_arguments() -> argparse.Namespace:
         default="cobyla",
         help="DEM probability fitting method (default: cobyla)",
     )
+    parser.add_argument(
+        "--pair-loss-weight",
+        type=parse_pair_loss_weight,
+        default="auto",
+        help="Positive pair-MSE weight or 'auto' (default: auto)",
+    )
     return parser.parse_args()
+
+
+def resolve_pair_loss_weight(
+    requested_weight: str | float,
+    initial_single_rmse: float,
+    initial_pair_rmse: float,
+) -> tuple[str, float]:
+    """Resolve the fixed pair-loss weight used throughout optimization.
+
+    Args:
+        requested_weight: ``auto`` or a positive finite manual weight.
+        initial_single_rmse: Unweighted initial single-detector RMSE.
+        initial_pair_rmse: Unweighted initial detector-pair RMSE.
+
+    Returns:
+        The weight mode and resolved positive finite weight.
+
+    Raises:
+        ValueError: If a metric or requested weight cannot produce a positive finite
+            weight.
+    """
+    if requested_weight == "auto":
+        single_mse = initial_single_rmse**2
+        pair_mse = initial_pair_rmse**2
+        if not np.isfinite(single_mse) or single_mse <= 0:
+            raise ValueError("Initial single MSE must be finite and positive for auto")
+        if not np.isfinite(pair_mse) or pair_mse <= 0:
+            raise ValueError("Initial pair MSE must be finite and positive for auto")
+        weight = single_mse / pair_mse
+        mode = "auto"
+    else:
+        try:
+            weight = float(requested_weight)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Manual pair loss weight must be numeric") from error
+        mode = "manual"
+    if not np.isfinite(weight) or weight <= 0:
+        raise ValueError("Pair loss weight must be finite and positive")
+    return mode, weight
+
+
+def pair_loss_weight_directory(requested_weight: str | float) -> str:
+    """Return the result subdirectory for a pair-loss weight selection.
+
+    Args:
+        requested_weight: ``auto`` or a positive finite manual weight.
+
+    Returns:
+        A stable directory name beginning with ``weight-``.
+
+    Raises:
+        ValueError: If a manual weight is not numeric.
+    """
+    if requested_weight == "auto":
+        return "weight-auto"
+    try:
+        weight = float(requested_weight)
+    except (TypeError, ValueError) as error:
+        raise ValueError("Manual pair loss weight must be numeric") from error
+    return f"weight-{weight:.15g}"
 
 
 def logical_error_rate(
@@ -383,7 +476,10 @@ def main() -> None:
     """
     arguments = parse_arguments()
     experiment_results_directory = (
-        RESULTS_DIRECTORY / arguments.experiment / arguments.training_method
+        RESULTS_DIRECTORY
+        / arguments.experiment
+        / arguments.training_method
+        / pair_loss_weight_directory(arguments.pair_loss_weight)
     )
     loss_plot_path = experiment_results_directory / "loss.png"
     ler_plot_path = experiment_results_directory / "ler.png"
@@ -422,11 +518,22 @@ def main() -> None:
     error_instructions = [
         instruction for instruction in initial_dem if instruction.type == "error"
     ]
-    statistics_calculator = DetectorPairCorrelationStatistics(PAIR_LOSS_WEIGHT)
-    syndrome_correlations = statistics_calculator.calculate(syndrome_samples)
+    component_statistics = DetectorPairCorrelationStatistics()
+    syndrome_correlations = component_statistics.calculate(syndrome_samples)
+    initial_dem_correlations = dem_pair_probabilities(initial_dem)
+    initial_component_metrics = component_statistics.metrics(
+        syndrome_correlations,
+        initial_dem_correlations,
+    )
+    weight_mode, pair_loss_weight = resolve_pair_loss_weight(
+        arguments.pair_loss_weight,
+        initial_component_metrics["single_rmse"],
+        initial_component_metrics["pair_rmse"],
+    )
+    statistics_calculator = DetectorPairCorrelationStatistics(pair_loss_weight)
     initial_metrics = statistics_calculator.metrics(
         syndrome_correlations,
-        dem_pair_probabilities(initial_dem),
+        initial_dem_correlations,
     )
     combined_rmse_history: list[float] = []
     single_rmse_history: list[float] = []
@@ -437,6 +544,14 @@ def main() -> None:
         pair_rmse_history,
         combined_rmse_history,
     )
+    initial_single_mse = initial_metrics["single_rmse"] ** 2
+    initial_pair_mse = initial_metrics["pair_rmse"] ** 2
+    print(f"pair loss weight mode = {weight_mode}")
+    print(f"initial single RMSE = {initial_metrics['single_rmse']:.8g}")
+    print(f"initial pair RMSE = {initial_metrics['pair_rmse']:.8g}")
+    print(f"initial single MSE = {initial_single_mse:.8g}")
+    print(f"initial pair MSE = {initial_pair_mse:.8g}")
+    print(f"pair loss weight = {pair_loss_weight:.8g}")
 
     # 3. Track LER using the fixed evaluation samples collected above.
     initial_ler = logical_error_rate(initial_dem, detector_samples, actual_observables)
@@ -509,7 +624,7 @@ def main() -> None:
             optimized_dem, loss_history = train_dem_with_least_squares(
                 initial_dem,
                 syndrome_samples,
-                PAIR_LOSS_WEIGHT,
+                pair_loss_weight,
                 callback=update_progress,
             )
         else:
@@ -518,7 +633,7 @@ def main() -> None:
                 syndrome_samples,
                 steps=OPTIMIZATION_STEPS,
                 learning_rate=GRADIENT_LEARNING_RATE,
-                pair_loss_weight=PAIR_LOSS_WEIGHT,
+                pair_loss_weight=pair_loss_weight,
                 callback=update_progress,
             )
 
@@ -549,9 +664,7 @@ def main() -> None:
         "mean pair correlation = "
         f"{np.nanmean(syndrome_correlations[pair_rows, pair_columns]):.6g}"
     )
-    print(f"initial single RMSE = {initial_metrics['single_rmse']:.8g}")
     print(f"optimized single RMSE = {optimized_metrics['single_rmse']:.8g}")
-    print(f"initial pair RMSE = {initial_metrics['pair_rmse']:.8g}")
     print(f"optimized pair RMSE = {optimized_metrics['pair_rmse']:.8g}")
     print(f"initial RMSE = {initial_metrics['rmse']:.8g}")
     print(f"optimized RMSE = {optimized_metrics['rmse']:.8g}")
