@@ -1,0 +1,27 @@
+{
+  "doi": "10.5281/zenodo.13273331",
+  "archive": "google_105Q_surface_code_d3_d5_d7.zip",
+  "patch": "d3_at_q6_7",
+  "basis": "Z",
+  "distance": 3,
+  "shared_plot_limit": 0.03683698644303113,
+  "runs": [
+    {
+      "rounds": 8,
+      "shots": 50000,
+      "detectors": 60,
+      "selection": "prefix",
+      "source_rounds": 10,
+      "final_readout_included": false,
+      "source_archive_directory": "google_105Q_surface_code_d3_d5_d7/d3_at_q6_7/Z/r10/",
+      "source_sha256": {
+        "circuit_ideal.stim": "21a8cb944aeec046740d189838ac31ea368c6bcbe034ab14d88827ca35b72262",
+        "measurements.b8": "8f11cd015d7bb71883086ef27b3f365e7c94e0e1ac6a82fc13dab4a49cae402f",
+        "sweep_bits.b8": "8baae7d0e9e048f1bf0e5e39f8e3c8827304d15b9e728dc9d636718ff0eac6e1",
+        "detection_events.b8": "d985e14ec51a0976688176fe236946af1a90fc9590113e491e8661f5d115ae5d",
+        "metadata.json": "61abac1f71c545fe3a5727fe8eee247cc0183552ce02f2740491d50212de7007"
+      },
+      "pij_json": "r8/pij.json"
+    }
+  ]
+}
