@@ -1,8 +1,15 @@
 # fdem
 
 A minimal example that estimates the logical error rate (LER) of a rotated surface
-code using a Stim detector error model (DEM) and a noisy circuit exported by the
-THeatA workbench.
+code from syndrome samples produced by a noisy circuit exported by the THeatA
+workbench.
+
+The device module exposes sampled detector events instead of its circuit or DEM. The
+training program constructs a generic graphlike candidate DEM containing every
+single-detector and two-detector error pattern, then optimizes those probabilities
+against the sampled firing rates and pair correlations. Logical targets use fixed
+detector-index cuts because syndrome statistics alone cannot identify which error
+patterns flip a logical observable.
 
 Place each exported circuit in a directory named after the experiment. The circuit
 must use the fixed filename `circuit.stim`.

@@ -10,12 +10,9 @@ import stim
 from scipy.optimize import minimize
 from tqdm import tqdm
 
-from .device import (
-    load_physical_device_circuit,
-    sample_physical_device_syndromes,
-)
+from .device import sample_physical_device_syndromes
 from .plot import save_ler_plot, save_loss_plot
-from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
+from .statistics import DetectorCombinedStatistics, ISyndromeStatistics
 
 
 # Optimization settings. Change these values to try different configurations.
@@ -23,6 +20,8 @@ SHOTS = 100_000
 MODEL_SHOTS = 10_000
 OPTIMIZATION_STEPS = 300
 LEARNING_RATE = 0.0001
+CORRELATION_WEIGHT = 1.0
+INITIAL_PRIOR = 0.001
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
 RESULTS_DIRECTORY = Path("var")
@@ -42,35 +41,79 @@ def parse_arguments() -> argparse.Namespace:
     )
     return parser.parse_args()
 
-def build_dem(circuit: stim.Circuit) -> stim.DetectorErrorModel:
-    """Build a flattened detector error model from a circuit.
+def build_candidate_dem(
+    detector_count: int,
+    observable_count: int,
+    initial_prior: float,
+) -> stim.DetectorErrorModel:
+    """Build a generic graphlike DEM without inspecting the physical-device circuit.
 
-    ``PAULI_CHANNEL_2`` contains mutually exclusive error branches that cannot be
-    represented exactly by a DEM's independent error mechanisms. For circuits that
-    contain this instruction, the conversion enables Stim's disjoint-error
-    approximation only up to the largest channel probability present in the circuit.
+    The candidate structure contains one error mechanism for each detector and one for
+    every unordered detector pair. Logical targets are assigned using fixed cuts in
+    detector-index order. These cuts make the model decodable but are only an ansatz;
+    syndrome statistics cannot determine logical-observable targets.
 
     Args:
-        circuit: Circuit to convert into a detector error model.
+        detector_count: Number of detectors in the sampled syndrome data.
+        observable_count: Number of logical observables in the evaluation data.
+        initial_prior: Initial probability assigned to every candidate mechanism.
 
     Returns:
-        The circuit-derived detector error model with repeat blocks expanded.
+        A graphlike detector error model with fixed single-detector and detector-pair
+        mechanisms.
+
+    Raises:
+        ValueError: If fewer than two detectors or one observable are requested, or if
+            the initial prior is not a finite probability below 0.5.
     """
-    channel_probabilities = [
-        sum(instruction.gate_args_copy())
-        for instruction in circuit.flattened()
-        if instruction.name == "PAULI_CHANNEL_2"
+    if detector_count < 2:
+        raise ValueError("Candidate DEM requires at least two detectors")
+    if observable_count < 1:
+        raise ValueError("Candidate DEM requires at least one observable")
+    if not np.isfinite(initial_prior) or not 0 < initial_prior < 0.5:
+        raise ValueError("Initial prior must be finite and between 0 and 0.5")
+
+    logical_cuts = [
+        (observable + 1) * detector_count // (observable_count + 1)
+        for observable in range(observable_count)
     ]
-    if channel_probabilities:
-        approximation_threshold = np.nextafter(
-            max(channel_probabilities),
-            np.inf,
-        )
-        return circuit.detector_error_model(
-            decompose_errors=True,
-            approximate_disjoint_errors=approximation_threshold,
-        ).flattened()
-    return circuit.detector_error_model(decompose_errors=True).flattened()
+    dem = stim.DetectorErrorModel()
+
+    def logical_targets(left: int, right: int | None = None) -> list[stim.DemTarget]:
+        """Return logical targets crossed by a candidate error mechanism.
+
+        Args:
+            left: Index of the first detector endpoint.
+            right: Index of the second endpoint, or the implicit boundary for a
+                single-detector mechanism.
+
+        Returns:
+            Logical-observable targets crossed by the mechanism.
+        """
+        return [
+            stim.target_logical_observable_id(observable)
+            for observable, cut in enumerate(logical_cuts)
+            if (
+                (left >= cut)
+                if right is None
+                else ((left >= cut) != (right >= cut))
+            )
+        ]
+
+    for detector in range(detector_count):
+        targets = [stim.target_relative_detector_id(detector)]
+        targets.extend(logical_targets(detector))
+        dem.append("error", initial_prior, targets, tag="candidate_single")
+
+    for left in range(detector_count):
+        for right in range(left + 1, detector_count):
+            targets = [
+                stim.target_relative_detector_id(left),
+                stim.target_relative_detector_id(right),
+            ]
+            targets.extend(logical_targets(left, right))
+            dem.append("error", initial_prior, targets, tag="candidate_pair")
+    return dem
 
 
 def logical_error_rate(
@@ -140,7 +183,10 @@ def train_dem(
     model_shots: int,
     learning_rate: float,
     seed: int,
-    callback: Callable[[int, float, stim.DetectorErrorModel], None] | None = None,
+    callback: Callable[
+        [int, dict[str, float], stim.DetectorErrorModel],
+        None,
+    ] | None = None,
 ) -> tuple[stim.DetectorErrorModel, list[float]]:
     """Optimize DEM probabilities against physical-device syndrome statistics.
 
@@ -154,7 +200,7 @@ def train_dem(
         learning_rate: Initial COBYLA trust-region radius.
         seed: Random seed used for every DEM sampling evaluation.
         callback: Optional function called after each objective-function evaluation with
-            the evaluation number, current loss, and candidate DEM.
+            the evaluation number, current loss metrics, and candidate DEM.
 
     Returns:
         A tuple containing the optimized DEM and the loss from each objective-function
@@ -189,10 +235,11 @@ def train_dem(
         model_dem = with_priors(initial_dem, priors)
         model_syndromes, _, _ = model_dem.compile_sampler(seed=seed).sample(model_shots)
         model_statistics = syndrome_statistics.calculate(model_syndromes)
-        loss = syndrome_statistics.difference(target_statistics, model_statistics)
+        metrics = syndrome_statistics.metrics(target_statistics, model_statistics)
+        loss = metrics["loss"]
         loss_history.append(loss)
         if callback is not None:
-            callback(len(loss_history), loss, model_dem)
+            callback(len(loss_history), metrics, model_dem)
         return loss
 
     result = minimize(
@@ -215,56 +262,71 @@ def main() -> None:
         None.
     """
     arguments = parse_arguments()
-    physical_device_circuit = load_physical_device_circuit(arguments.experiment)
     experiment_results_directory = RESULTS_DIRECTORY / arguments.experiment
     loss_plot_path = experiment_results_directory / "loss.png"
     ler_plot_path = experiment_results_directory / "ler.png"
     print(f"experiment = {arguments.experiment}")
-    print(f"detectors = {physical_device_circuit.num_detectors}")
-    print(f"observables = {physical_device_circuit.num_observables}")
 
-    # 1. Use the circuit-derived naive DEM directly as the initial DEM.
-    naive_dem = build_dem(physical_device_circuit)
-    initial_dem = naive_dem
-    error_instructions = [
-        instruction for instruction in initial_dem if instruction.type == "error"
-    ]
-
-    # 2. Collect syndrome data for the future optimization step.
+    # 1. Collect training and evaluation data through the device sampling interface.
     syndrome_samples = sample_physical_device_syndromes(
-        physical_device_circuit,
+        arguments.experiment,
         SHOTS,
         SEED,
     )
-    statistics_calculator = DetectorPairCorrelationStatistics()
-    syndrome_correlations = statistics_calculator.calculate(syndrome_samples)
-
-    # 3. Generate fixed evaluation data for tracking LER during optimization.
-    evaluation_sampler = physical_device_circuit.compile_detector_sampler(seed=SEED + 2)
-    detector_samples, actual_observables = evaluation_sampler.sample(
-        shots=SHOTS,
+    detector_samples, actual_observables = sample_physical_device_syndromes(
+        arguments.experiment,
+        SHOTS,
+        SEED + 2,
         separate_observables=True,
     )
+    if syndrome_samples.shape[1] != detector_samples.shape[1]:
+        raise ValueError("Training and evaluation detector counts must match")
+
+    print(f"detectors = {syndrome_samples.shape[1]}")
+    print(f"observables = {actual_observables.shape[1]}")
+
+    # 2. Build a generic candidate DEM from sample dimensions, not from the device.
+    initial_dem = build_candidate_dem(
+        syndrome_samples.shape[1],
+        actual_observables.shape[1],
+        INITIAL_PRIOR,
+    )
+    error_instructions = [
+        instruction for instruction in initial_dem if instruction.type == "error"
+    ]
+    statistics_calculator = DetectorCombinedStatistics(CORRELATION_WEIGHT)
+    syndrome_firing_rates, syndrome_correlations = statistics_calculator.calculate(
+        syndrome_samples
+    )
+
+    # 3. Track LER using the fixed evaluation samples collected above.
     initial_ler = logical_error_rate(initial_dem, detector_samples, actual_observables)
     ler_history: list[tuple[int, float]] = []
+    firing_rate_rmse_history: list[float] = []
+    pair_correlation_rmse_history: list[float] = []
 
     with tqdm(total=OPTIMIZATION_STEPS, desc="Optimizing DEM", unit="eval") as progress:
 
         def update_progress(
             evaluation: int,
-            loss: float,
+            metrics: dict[str, float],
             candidate_dem: stim.DetectorErrorModel,
         ) -> None:
             """Update progress and periodically record the candidate LER.
 
             Args:
                 evaluation: Number of completed objective-function evaluations.
-                loss: Loss from the latest evaluation.
+                metrics: Loss metrics from the latest evaluation.
                 candidate_dem: DEM evaluated by the current objective-function call.
 
             Returns:
                 None.
             """
+            loss = metrics["loss"]
+            firing_rate_rmse_history.append(metrics["firing_rate_rmse"])
+            pair_correlation_rmse_history.append(
+                metrics["pair_correlation_rmse"]
+            )
             if evaluation % LER_EVALUATION_INTERVAL == 0:
                 candidate_ler = logical_error_rate(
                     candidate_dem,
@@ -294,7 +356,12 @@ def main() -> None:
 
     # 4. Evaluate the optimized decoder on the same fixed data.
     optimized_ler = logical_error_rate(optimized_dem, detector_samples, actual_observables)
-    save_loss_plot(loss_history, loss_plot_path)
+    save_loss_plot(
+        firing_rate_rmse_history,
+        pair_correlation_rmse_history,
+        loss_history,
+        loss_plot_path,
+    )
     save_ler_plot(
         ler_history,
         initial_ler,
@@ -306,9 +373,22 @@ def main() -> None:
     print(f"DEM error instructions = {len(error_instructions)}")
     print(f"first initial error = {error_instructions[0]}")
     print(f"syndrome samples = {syndrome_samples.shape}")
+    print(f"mean detector firing rate = {syndrome_firing_rates.mean():.6g}")
     print(f"mean pair correlation = {np.nanmean(syndrome_correlations):.6g}")
-    print(f"initial loss = {loss_history[0]:.8g}")
-    print(f"best loss = {min(loss_history):.8g}")
+    best_evaluation = int(np.argmin(loss_history))
+    print(f"correlation weight = {CORRELATION_WEIGHT:.6g}")
+    print(f"initial firing-rate RMSE = {firing_rate_rmse_history[0]:.8g}")
+    print(f"initial pair-correlation RMSE = {pair_correlation_rmse_history[0]:.8g}")
+    print(f"initial combined loss = {loss_history[0]:.8g}")
+    print(
+        "firing-rate RMSE at best loss = "
+        f"{firing_rate_rmse_history[best_evaluation]:.8g}"
+    )
+    print(
+        "pair-correlation RMSE at best loss = "
+        f"{pair_correlation_rmse_history[best_evaluation]:.8g}"
+    )
+    print(f"best combined loss = {loss_history[best_evaluation]:.8g}")
     print(f"initial LER = {initial_ler:.6g}")
     print(f"optimized LER = {optimized_ler:.6g}")
     print(f"loss plot = {loss_plot_path}")

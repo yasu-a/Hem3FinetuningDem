@@ -1,4 +1,4 @@
-"""Tests for loading physical-device experiment circuits."""
+"""Tests for physical-device syndrome sampling."""
 
 from pathlib import Path
 
@@ -6,10 +6,7 @@ import numpy as np
 import pytest
 import stim
 
-from fdem.device import (
-    load_physical_device_circuit,
-    sample_physical_device_syndromes,
-)
+from fdem.device import sample_physical_device_syndromes
 
 
 def _write_experiment(experiments_directory: Path, name: str) -> stim.Circuit:
@@ -34,37 +31,60 @@ def _write_experiment(experiments_directory: Path, name: str) -> stim.Circuit:
     return circuit
 
 
-def test_loads_circuit_from_named_experiment_directory(tmp_path: Path) -> None:
-    """The loader reads circuit.stim from the selected experiment directory."""
-    expected = _write_experiment(tmp_path, "d3-r1-default")
-
-    actual = load_physical_device_circuit("d3-r1-default", tmp_path)
-
-    assert actual == expected
-
-
-def test_loaded_circuit_supports_syndrome_sampling(tmp_path: Path) -> None:
-    """A loaded experiment circuit can produce detector-event samples."""
+def test_named_experiment_supports_syndrome_sampling(tmp_path: Path) -> None:
+    """The public device interface returns detector samples by experiment name."""
     circuit = _write_experiment(tmp_path, "sample")
-    loaded = load_physical_device_circuit("sample", tmp_path)
 
-    syndromes = sample_physical_device_syndromes(loaded, shots=5, seed=0)
+    syndromes = sample_physical_device_syndromes(
+        "sample",
+        shots=5,
+        seed=0,
+        experiments_directory=tmp_path,
+    )
 
     assert syndromes.shape == (5, circuit.num_detectors)
     assert syndromes.dtype == np.bool_
+
+
+def test_sampling_can_return_observables_for_evaluation(tmp_path: Path) -> None:
+    """Evaluation sampling returns observables without exposing the device circuit."""
+    circuit = _write_experiment(tmp_path, "evaluation")
+
+    detectors, observables = sample_physical_device_syndromes(
+        "evaluation",
+        shots=5,
+        seed=0,
+        separate_observables=True,
+        experiments_directory=tmp_path,
+    )
+
+    assert detectors.shape == (5, circuit.num_detectors)
+    assert observables.shape == (5, circuit.num_observables)
+    assert detectors.dtype == np.bool_
+    assert observables.dtype == np.bool_
 
 
 @pytest.mark.parametrize("name", ["", ".", "..", "../outside", "nested/name"])
 def test_rejects_unsafe_experiment_names(tmp_path: Path, name: str) -> None:
     """Experiment selection cannot escape or nest below the experiment root."""
     with pytest.raises(ValueError):
-        load_physical_device_circuit(name, tmp_path)
+        sample_physical_device_syndromes(
+            name,
+            shots=1,
+            seed=0,
+            experiments_directory=tmp_path,
+        )
 
 
 def test_reports_missing_experiment_circuit(tmp_path: Path) -> None:
     """A missing circuit.stim produces a clear file-not-found error."""
     with pytest.raises(FileNotFoundError, match="circuit.stim"):
-        load_physical_device_circuit("missing", tmp_path)
+        sample_physical_device_syndromes(
+            "missing",
+            shots=1,
+            seed=0,
+            experiments_directory=tmp_path,
+        )
 
 
 @pytest.mark.parametrize(
@@ -84,4 +104,9 @@ def test_rejects_circuits_missing_decode_metadata(
     (directory / "circuit.stim").write_text(circuit_text, encoding="utf-8")
 
     with pytest.raises(ValueError):
-        load_physical_device_circuit("invalid", tmp_path)
+        sample_physical_device_syndromes(
+            "invalid",
+            shots=1,
+            seed=0,
+            experiments_directory=tmp_path,
+        )
