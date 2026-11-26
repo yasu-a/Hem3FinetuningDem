@@ -10,7 +10,7 @@ from fdem.__main__ import (
     record_rmse_metrics,
     train_dem_with_cobyla,
     train_dem_with_gradient_descent,
-    train_dem_with_pair_least_squares,
+    train_dem_with_least_squares,
 )
 from fdem.pij import dem_pair_probabilities
 from fdem.statistics import (
@@ -23,7 +23,7 @@ from fdem.statistics import (
     ("extra_arguments", "expected_method"),
     [
         ([], "cobyla"),
-        (["--training-method", "pair-lsq"], "pair-lsq"),
+        (["--training-method", "lsq"], "lsq"),
         (["--training-method", "gradient-descent"], "gradient-descent"),
     ],
 )
@@ -32,7 +32,7 @@ def test_training_method_can_be_selected_from_command_line(
     extra_arguments: list[str],
     expected_method: str,
 ) -> None:
-    """The command line selects the iterative or direct pair fitting method."""
+    """The command line selects an iterative or direct correlation fitting method."""
     monkeypatch.setattr(
         "sys.argv",
         ["fdem", "--experiment", "sample", *extra_arguments],
@@ -126,8 +126,8 @@ def test_training_callback_reports_combined_loss_components() -> None:
     )
 
 
-def test_pair_least_squares_training_reduces_unified_rmse() -> None:
-    """The direct trainer reduces unified RMSE and updates single mechanisms."""
+def test_least_squares_training_uses_single_and_pair_correlations() -> None:
+    """Least squares reduces unified RMSE and updates single and pair mechanisms."""
     initial_dem = stim.DetectorErrorModel(
         """
         error(0.01) D0
@@ -169,7 +169,7 @@ def test_pair_least_squares_training_reduces_unified_rmse() -> None:
         assert candidate_dem.num_detectors == 3
         reported.append((evaluation, metrics))
 
-    fitted_dem, loss_history = train_dem_with_pair_least_squares(
+    fitted_dem, loss_history = train_dem_with_least_squares(
         initial_dem,
         physical_syndromes,
         callback=record_result,
@@ -184,6 +184,9 @@ def test_pair_least_squares_training_reduces_unified_rmse() -> None:
     assert fitted_loss < initial_loss
     assert fitted_dem[0].args_copy()[0] != pytest.approx(
         initial_dem[0].args_copy()[0]
+    )
+    assert fitted_dem[3].args_copy()[0] != pytest.approx(
+        initial_dem[3].args_copy()[0]
     )
     assert loss_history == pytest.approx([fitted_loss])
     assert reported[0][0] == 1

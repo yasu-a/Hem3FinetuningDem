@@ -41,7 +41,7 @@ PAIR_LOSS_WEIGHT = 1.0
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
 RESULTS_DIRECTORY = Path("var")
-TRAINING_METHODS = ("cobyla", "pair-lsq", "gradient-descent")
+TRAINING_METHODS = ("cobyla", "lsq", "gradient-descent")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -243,7 +243,7 @@ def train_dem_with_cobyla(
     return with_priors(initial_dem, result.x), loss_history
 
 
-def train_dem_with_pair_least_squares(
+def train_dem_with_least_squares(
     initial_dem: stim.DetectorErrorModel,
     physical_device_syndromes: np.ndarray,
     pair_loss_weight: float = 1.0,
@@ -252,7 +252,7 @@ def train_dem_with_pair_least_squares(
         None,
     ] | None = None,
 ) -> tuple[stim.DetectorErrorModel, list[float]]:
-    """Fit DEM probabilities directly from unified detector correlations.
+    """Fit DEM probabilities from single-detector and pair correlations.
 
     The fit converts independent error probabilities into additive parity log rates
     and solves firing-rate and detector-pair incidence equations with nonnegative
@@ -449,7 +449,7 @@ def main() -> None:
     latest_ler: float | None = None
 
     progress_total = (
-        1 if arguments.training_method == "pair-lsq" else OPTIMIZATION_STEPS
+        1 if arguments.training_method == "lsq" else OPTIMIZATION_STEPS
     )
     with tqdm(total=progress_total, desc="Optimizing DEM", unit="eval") as progress:
 
@@ -505,8 +505,8 @@ def main() -> None:
                 seed=SEED + 1,
                 callback=update_progress,
             )
-        elif arguments.training_method == "pair-lsq":
-            optimized_dem, loss_history = train_dem_with_pair_least_squares(
+        elif arguments.training_method == "lsq":
+            optimized_dem, loss_history = train_dem_with_least_squares(
                 initial_dem,
                 syndrome_samples,
                 PAIR_LOSS_WEIGHT,

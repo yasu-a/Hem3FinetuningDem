@@ -32,10 +32,10 @@ The loss independently normalizes detector firing-rate MSE and off-diagonal
 pair-correlation MSE, then adds them with a configurable pair weight. The default
 `cobyla` method repeatedly samples the candidate DEM and minimizes the resulting
 combined RMSE. To fit the same diagonal and off-diagonal statistics directly with
-bounded linear least squares in parity log-rate space, select `pair-lsq`:
+bounded linear least squares in parity log-rate space, select `lsq`:
 
 ```console
-python -m fdem --experiment d3-r3-default --training-method pair-lsq
+python -m fdem --experiment d3-r3-default --training-method lsq
 ```
 
 To iteratively minimize the exact pair-probability MSE with its analytic log-rate
