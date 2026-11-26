@@ -15,7 +15,8 @@ def save_loss_plot(
     """Save the optimization RMSE history.
 
     Args:
-        loss_history: Combined detector-correlation RMSE from each evaluation.
+        loss_history: Combined detector-correlation RMSE at evaluation zero and after
+            each objective evaluation.
         output_path: Output path for the generated figure.
 
     Returns:
@@ -27,11 +28,75 @@ def save_loss_plot(
     if not loss_history:
         raise ValueError("Loss history must not be empty")
 
+    _save_rmse_plot(loss_history, "Detector-correlation RMSE", output_path)
+
+
+def save_single_loss_plot(
+    single_rmse_history: list[float],
+    output_path: Path,
+) -> None:
+    """Save the single-detector RMSE history.
+
+    Args:
+        single_rmse_history: Single-detector RMSE at evaluation zero and after each
+            objective evaluation.
+        output_path: Output path for the generated figure.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If the RMSE history is empty.
+    """
+    if not single_rmse_history:
+        raise ValueError("Single-detector RMSE history must not be empty")
+
+    _save_rmse_plot(single_rmse_history, "Single-detector RMSE", output_path)
+
+
+def save_pair_loss_plot(
+    pair_rmse_history: list[float],
+    output_path: Path,
+) -> None:
+    """Save the detector-pair RMSE history.
+
+    Args:
+        pair_rmse_history: Detector-pair RMSE at evaluation zero and after each
+            objective evaluation.
+        output_path: Output path for the generated figure.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If the RMSE history is empty.
+    """
+    if not pair_rmse_history:
+        raise ValueError("Detector-pair RMSE history must not be empty")
+
+    _save_rmse_plot(pair_rmse_history, "Detector-pair RMSE", output_path)
+
+
+def _save_rmse_plot(
+    rmse_history: list[float],
+    title: str,
+    output_path: Path,
+) -> None:
+    """Save an RMSE history using the common loss-plot style.
+
+    Args:
+        rmse_history: RMSE at evaluation zero and after each objective evaluation.
+        title: Figure title.
+        output_path: Output path for the generated figure.
+
+    Returns:
+        None.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(figsize=(3.2, 2.8))
-    evaluations = range(1, len(loss_history) + 1)
-    axes.plot(evaluations, loss_history)
-    axes.set_title("Detector-correlation RMSE", fontsize=12)
+    evaluations = range(len(rmse_history))
+    axes.plot(evaluations, rmse_history)
+    axes.set_title(title, fontsize=12)
     axes.set_xlabel("Objective Evaluation", fontsize=11)
     axes.set_ylabel("RMSE", fontsize=11)
     axes.tick_params(labelsize=10)

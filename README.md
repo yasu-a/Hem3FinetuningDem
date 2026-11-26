@@ -50,8 +50,9 @@ occupy the diagonal of the correlation matrix, allowing the direct fit and gradi
 descent to update single-detector mechanisms as well as pair-visible mechanisms.
 
 The generated figures are grouped by training method. For example, the default method
-saves them as `var/d3-r3-default/cobyla/loss.png` and
-`var/d3-r3-default/cobyla/ler.png`.
+saves the combined RMSE as `var/d3-r3-default/cobyla/loss.png`, the separate
+single-detector and detector-pair histories as `single_loss.png` and `pair_loss.png`,
+and the logical-error-rate history as `ler.png` in the same directory.
 
 For PowerShell, activate the environment with `.\.venv\Scripts\Activate.ps1`.
 

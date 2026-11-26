@@ -7,6 +7,7 @@ import stim
 from fdem.__main__ import (
     parse_arguments,
     prior_change_summary,
+    record_rmse_metrics,
     train_dem_with_cobyla,
     train_dem_with_gradient_descent,
     train_dem_with_pair_least_squares,
@@ -40,6 +41,30 @@ def test_training_method_can_be_selected_from_command_line(
     arguments = parse_arguments()
 
     assert arguments.training_method == expected_method
+
+
+def test_rmse_histories_record_initial_and_objective_metrics() -> None:
+    """RMSE histories preserve the initial value and every evaluation in order."""
+    single_history: list[float] = []
+    pair_history: list[float] = []
+    combined_history: list[float] = []
+    metrics_history = [
+        {"single_rmse": 0.3, "pair_rmse": 0.2, "rmse": 0.4},
+        {"single_rmse": 0.2, "pair_rmse": 0.1, "rmse": 0.25},
+        {"single_rmse": 0.1, "pair_rmse": 0.05, "rmse": 0.12},
+    ]
+
+    for metrics in metrics_history:
+        record_rmse_metrics(
+            metrics,
+            single_history,
+            pair_history,
+            combined_history,
+        )
+
+    assert single_history == [0.3, 0.2, 0.1]
+    assert pair_history == [0.2, 0.1, 0.05]
+    assert combined_history == [0.4, 0.25, 0.12]
 
 
 def test_training_callback_reports_combined_loss_components() -> None:

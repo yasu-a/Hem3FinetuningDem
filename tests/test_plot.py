@@ -1,10 +1,16 @@
 """Tests for optimization metric plots."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
-from fdem.plot import save_ler_plot, save_loss_plot
+from fdem.plot import (
+    save_ler_plot,
+    save_loss_plot,
+    save_pair_loss_plot,
+    save_single_loss_plot,
+)
 
 
 def test_loss_plot_saves_rmse_history(tmp_path: Path) -> None:
@@ -21,6 +27,27 @@ def test_loss_plot_rejects_empty_history(tmp_path: Path) -> None:
     """The loss plot rejects an empty RMSE history."""
     with pytest.raises(ValueError, match="must not be empty"):
         save_loss_plot([], tmp_path / "loss.png")
+
+
+@pytest.mark.parametrize(
+    ("save_plot", "filename"),
+    [
+        (save_single_loss_plot, "single_loss.png"),
+        (save_pair_loss_plot, "pair_loss.png"),
+    ],
+)
+def test_component_loss_plot_saves_initial_and_evaluation_history(
+    tmp_path: Path,
+    save_plot: Callable[[list[float], Path], None],
+    filename: str,
+) -> None:
+    """Each component plot accepts an initial value followed by evaluation values."""
+    output_path = tmp_path / filename
+
+    save_plot([0.3, 0.2, 0.1], output_path)
+
+    assert output_path.is_file()
+    assert output_path.stat().st_size > 0
 
 
 def test_ler_plot_connects_initial_intermediate_and_optimized_values(

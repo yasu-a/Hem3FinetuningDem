@@ -21,14 +21,19 @@ from .pij import (
     fit_dem_from_pij,
     pair_probability_mse_and_gradient,
 )
-from .plot import save_ler_plot, save_loss_plot
+from .plot import (
+    save_ler_plot,
+    save_loss_plot,
+    save_pair_loss_plot,
+    save_single_loss_plot,
+)
 from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
 
 
 # Optimization settings. Change these values to try different configurations.
 SHOTS = 100_000
 MODEL_SHOTS = 10_000
-OPTIMIZATION_STEPS = 10000
+OPTIMIZATION_STEPS = 2000
 LEARNING_RATE = 0.0001
 GRADIENT_LEARNING_RATE = 0.1
 REFERENCE_ERROR_PROBABILITY = 0.001
@@ -130,6 +135,31 @@ def prior_change_summary(
             float(np.mean(changes[2])) if changes[2] else 0.0
         ),
     }
+
+
+def record_rmse_metrics(
+    metrics: dict[str, float],
+    single_rmse_history: list[float],
+    pair_rmse_history: list[float],
+    combined_rmse_history: list[float],
+) -> None:
+    """Append already calculated RMSE metrics to optimization histories.
+
+    Args:
+        metrics: Named single, pair, and combined RMSE values.
+        single_rmse_history: Destination for single-detector RMSE values.
+        pair_rmse_history: Destination for detector-pair RMSE values.
+        combined_rmse_history: Destination for combined RMSE values.
+
+    Returns:
+        None.
+
+    Raises:
+        KeyError: If a required RMSE metric is absent.
+    """
+    single_rmse_history.append(metrics["single_rmse"])
+    pair_rmse_history.append(metrics["pair_rmse"])
+    combined_rmse_history.append(metrics["rmse"])
 
 
 def train_dem_with_cobyla(
@@ -357,6 +387,8 @@ def main() -> None:
     )
     loss_plot_path = experiment_results_directory / "loss.png"
     ler_plot_path = experiment_results_directory / "ler.png"
+    single_loss_plot_path = experiment_results_directory / "single_loss.png"
+    pair_loss_plot_path = experiment_results_directory / "pair_loss.png"
     print(f"experiment = {arguments.experiment}")
     print(f"training method = {arguments.training_method}")
 
@@ -396,6 +428,15 @@ def main() -> None:
         syndrome_correlations,
         dem_pair_probabilities(initial_dem),
     )
+    combined_rmse_history: list[float] = []
+    single_rmse_history: list[float] = []
+    pair_rmse_history: list[float] = []
+    record_rmse_metrics(
+        initial_metrics,
+        single_rmse_history,
+        pair_rmse_history,
+        combined_rmse_history,
+    )
 
     # 3. Track LER using the fixed evaluation samples collected above.
     initial_ler = logical_error_rate(initial_dem, detector_samples, actual_observables)
@@ -430,6 +471,12 @@ def main() -> None:
             nonlocal latest_ler
 
             loss = metrics["loss"]
+            record_rmse_metrics(
+                metrics,
+                single_rmse_history,
+                pair_rmse_history,
+                combined_rmse_history,
+            )
             if evaluation % LER_EVALUATION_INTERVAL == 0:
                 latest_ler = logical_error_rate(
                     candidate_dem,
@@ -482,7 +529,9 @@ def main() -> None:
         dem_pair_probabilities(optimized_dem),
     )
     prior_summary = prior_change_summary(initial_dem, optimized_dem)
-    save_loss_plot(loss_history, loss_plot_path)
+    save_loss_plot(combined_rmse_history, loss_plot_path)
+    save_single_loss_plot(single_rmse_history, single_loss_plot_path)
+    save_pair_loss_plot(pair_rmse_history, pair_loss_plot_path)
     save_ler_plot(
         ler_history,
         initial_ler,
@@ -525,6 +574,8 @@ def main() -> None:
         f"{prior_summary['multiple_prior_mean_absolute_change']:.8g}"
     )
     print(f"loss plot = {loss_plot_path}")
+    print(f"single RMSE plot = {single_loss_plot_path}")
+    print(f"pair RMSE plot = {pair_loss_plot_path}")
     print(f"LER plot = {ler_plot_path}")
 
 
