@@ -141,3 +141,11 @@ For detector-event arrays collected outside the bundled device simulator, call
 `fdem.correlations.detector_pair_correlations(syndromes)` and pass the resulting
 matrix with the baseline DEM to `fdem.pij.fit_dem_from_pij`. Use
 `fdem.pij.dem_pair_probabilities` to calculate the matrix for a DEM directly.
+
+## Experimental eight-round surface-code correlations
+
+The distance-3 logical Z memory exports include qubit-indexed JSON,
+detector-indexed CSV, heatmaps, and a standalone comparison viewer.
+Google Willow uses the first eight rounds of the released 10-round run.
+The Shenzhen IQA / SUSTech run includes a final readout after eight rounds.
+[Dataset links and JSON format](docs/qec-eight-round-correlations/PIJ_JSON_FORMAT.md)

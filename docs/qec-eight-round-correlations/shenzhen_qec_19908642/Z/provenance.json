@@ -1,0 +1,30 @@
+{
+  "doi": "10.5281/zenodo.19908642",
+  "paper": "https://arxiv.org/html/2605.04892v1",
+  "archive": "01_data_for_Fig2d_FigS3a.rar",
+  "archive_md5": "beb4505ec7e0c085b10ea9c1e761169e",
+  "distance": 3,
+  "basis": "Z",
+  "initial_state": "0_L",
+  "active_feedback": false,
+  "runs": [
+    {
+      "rounds": 8,
+      "shots": 10000,
+      "detectors": 64,
+      "source_file_id": 42676,
+      "archive_member": "01_data_for_Fig2d_FigS3a/42676 - fb_data.npz",
+      "source_sha256": "6d96ee9b4c3dec9637eaaa1a03edeca194607a777ebab69318d559a6c3dd39fb",
+      "undefined_off_diagonal_pairs": 0,
+      "plot_color_limit": 0.18,
+      "plot_clipped_pairs": 0,
+      "max_abs_plotted_estimate": 0.13806747003066994,
+      "distance": 3,
+      "basis": "Z",
+      "initial_state": "0_L",
+      "active_feedback": false,
+      "pij_json": "r8/pij.json"
+    }
+  ],
+  "shared_plot_limit": 0.18
+}
