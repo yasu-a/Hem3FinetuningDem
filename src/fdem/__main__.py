@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from .device import sample_physical_device_syndromes
 from .plot import save_ler_plot, save_loss_plot
-from .statistics import DetectorCombinedStatistics, ISyndromeStatistics
+from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
 
 
 # Optimization settings. Change these values to try different configurations.
@@ -20,7 +20,6 @@ SHOTS = 100_000
 MODEL_SHOTS = 10_000
 OPTIMIZATION_STEPS = 300
 LEARNING_RATE = 0.0001
-CORRELATION_WEIGHT = 1.0
 INITIAL_PRIOR = 0.001
 LER_EVALUATION_INTERVAL = 10
 SEED = 0
@@ -294,16 +293,12 @@ def main() -> None:
     error_instructions = [
         instruction for instruction in initial_dem if instruction.type == "error"
     ]
-    statistics_calculator = DetectorCombinedStatistics(CORRELATION_WEIGHT)
-    syndrome_firing_rates, syndrome_correlations = statistics_calculator.calculate(
-        syndrome_samples
-    )
+    statistics_calculator = DetectorPairCorrelationStatistics()
+    syndrome_correlations = statistics_calculator.calculate(syndrome_samples)
 
     # 3. Track LER using the fixed evaluation samples collected above.
     initial_ler = logical_error_rate(initial_dem, detector_samples, actual_observables)
     ler_history: list[tuple[int, float]] = []
-    firing_rate_rmse_history: list[float] = []
-    pair_correlation_rmse_history: list[float] = []
 
     with tqdm(total=OPTIMIZATION_STEPS, desc="Optimizing DEM", unit="eval") as progress:
 
@@ -323,10 +318,6 @@ def main() -> None:
                 None.
             """
             loss = metrics["loss"]
-            firing_rate_rmse_history.append(metrics["firing_rate_rmse"])
-            pair_correlation_rmse_history.append(
-                metrics["pair_correlation_rmse"]
-            )
             if evaluation % LER_EVALUATION_INTERVAL == 0:
                 candidate_ler = logical_error_rate(
                     candidate_dem,
@@ -356,12 +347,7 @@ def main() -> None:
 
     # 4. Evaluate the optimized decoder on the same fixed data.
     optimized_ler = logical_error_rate(optimized_dem, detector_samples, actual_observables)
-    save_loss_plot(
-        firing_rate_rmse_history,
-        pair_correlation_rmse_history,
-        loss_history,
-        loss_plot_path,
-    )
+    save_loss_plot(loss_history, loss_plot_path)
     save_ler_plot(
         ler_history,
         initial_ler,
@@ -373,22 +359,9 @@ def main() -> None:
     print(f"DEM error instructions = {len(error_instructions)}")
     print(f"first initial error = {error_instructions[0]}")
     print(f"syndrome samples = {syndrome_samples.shape}")
-    print(f"mean detector firing rate = {syndrome_firing_rates.mean():.6g}")
     print(f"mean pair correlation = {np.nanmean(syndrome_correlations):.6g}")
-    best_evaluation = int(np.argmin(loss_history))
-    print(f"correlation weight = {CORRELATION_WEIGHT:.6g}")
-    print(f"initial firing-rate RMSE = {firing_rate_rmse_history[0]:.8g}")
-    print(f"initial pair-correlation RMSE = {pair_correlation_rmse_history[0]:.8g}")
-    print(f"initial combined loss = {loss_history[0]:.8g}")
-    print(
-        "firing-rate RMSE at best loss = "
-        f"{firing_rate_rmse_history[best_evaluation]:.8g}"
-    )
-    print(
-        "pair-correlation RMSE at best loss = "
-        f"{pair_correlation_rmse_history[best_evaluation]:.8g}"
-    )
-    print(f"best combined loss = {loss_history[best_evaluation]:.8g}")
+    print(f"initial RMSE = {loss_history[0]:.8g}")
+    print(f"best RMSE = {min(loss_history):.8g}")
     print(f"initial LER = {initial_ler:.6g}")
     print(f"optimized LER = {optimized_ler:.6g}")
     print(f"loss plot = {loss_plot_path}")

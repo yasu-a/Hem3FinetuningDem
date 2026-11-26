@@ -7,7 +7,7 @@ workbench.
 The device module exposes sampled detector events instead of its circuit or DEM. The
 training program constructs a generic graphlike candidate DEM containing every
 single-detector and two-detector error pattern, then optimizes those probabilities
-against the sampled firing rates and pair correlations. Logical targets use fixed
+against the RMSE of the sampled pair correlations. Logical targets use fixed
 detector-index cuts because syndrome statistics alone cannot identify which error
 patterns flip a logical observable.
 
