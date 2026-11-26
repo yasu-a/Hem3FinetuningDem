@@ -24,7 +24,7 @@ from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
 # Optimization settings. Change these values to try different configurations.
 SHOTS = 100_000
 MODEL_SHOTS = 10_000
-OPTIMIZATION_STEPS = 2000
+OPTIMIZATION_STEPS = 10000
 LEARNING_RATE = 0.0001
 GRADIENT_LEARNING_RATE = 0.1
 REFERENCE_ERROR_PROBABILITY = 0.001
