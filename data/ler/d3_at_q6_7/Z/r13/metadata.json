@@ -1,0 +1,21 @@
+{
+  "name": "d3_at_q6_7/Z/r13",
+  "dataset": "Google Quantum AI, 105-qubit Willow",
+  "source_doi": "10.5281/zenodo.13273331",
+  "license": "CC-BY-4.0",
+  "archive": "google_105Q_surface_code_d3_d5_d7.zip",
+  "source_archive_directory": "google_105Q_surface_code_d3_d5_d7/d3_at_q6_7/Z/r13/",
+  "distance": 3,
+  "basis": "Z",
+  "rounds": 13,
+  "shots": 50000,
+  "detectors": 104,
+  "observables": 1,
+  "circuit": "original circuit_ideal.stim from the archive, renamed",
+  "records": "original detection_events.b8 and obs_flips_actual.b8 from the archive",
+  "sha256": {
+    "circuit.stim": "ed0126a0ef31aba10fa2b0f918509635a951d1c03f2c8e598c8f5b97e09d533b",
+    "detection_events.b8": "ee35b488c3772a4b43010fa3bb5afb2b27e25a0c62a782eaf7d89cbacef983bc",
+    "obs_flips_actual.b8": "77cf4df66a0f24d85622d7adaac5ee0e1326068c6181a78e495acfe02a4fbb43"
+  }
+}
