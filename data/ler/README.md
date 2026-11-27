@@ -1,5 +1,21 @@
 # Recorded surface-code hardware shots
 
+## Where to find each kind of data
+
+| What you need | Where to look |
+| --- | --- |
+| Complete paired syndrome and logical-flip records | The recorded run directories under `data/ler/`. Use their two Stim b8 files together. |
+| Array shapes, dataset identifiers, and exact file paths | [Machine-readable run catalog](catalog.json). Paths for this checkout are relative to the repository root. |
+| NumPy arrays ready for a notebook | Run `python -m fdem.hardware_data` to create one `shots.npz` per run under `var/hardware-data/`. Git ignores this generated directory. |
+| Checked-in eight-round `pij` figures and JSON | [Eight-round viewer and formats](../../docs/qec-eight-round-correlations/PIJ_JSON_FORMAT.md). The Google panel shows the first eight rounds of the ten-round run. The Shenzhen panel uses a complete eight-round run. |
+| Full-round calibration-split `pij` files | Run `notebooks/hardware_prior_calibration.ipynb` in the separate `theata-prior-calibration` checkout. Its default outputs are under `results/hardware_calibration/` in that checkout. |
+
+For fitting and LER evaluation, start with the recorded rows or their
+NumPy export. Pair-correlation files summarize a selected set of shots.
+Use the same original row indices for detectors and logical flips.
+
+## Recorded runs
+
 All runs are distance-3 Z-memory experiments. The files retain the complete
 recorded shot sequence for each run.
 

@@ -67,3 +67,36 @@ def test_load_rejects_truncated_logical_flips(tmp_path, update_checksum):
         error = "Shot count"
     with pytest.raises(ValueError, match=error):
         load_run(copied)
+
+
+def test_catalog_resolves_recordings_and_correlation_exports():
+    """Keep all advertised source files and generated paths aligned with each run."""
+    repo = DATA_ROOT.parents[1]
+    catalog = json.loads((DATA_ROOT / "catalog.json").read_text())
+    cataloged_manifests = set()
+    assert catalog["schema_version"] == 1
+    assert catalog["path_base"] == "repository_root"
+    for run in catalog["runs"]:
+        files = {name: repo / path for name, path in run["recorded_stim"].items()}
+        metadata = json.loads(files["metadata"].read_text())
+        cataloged_manifests.add(files["metadata"])
+        assert run["run_id"] == metadata["name"]
+        for field in ("distance", "basis", "rounds", "shots", "detectors", "observables", "source_doi"):
+            assert run[field] == metadata[field]
+        assert all(path.is_file() for path in files.values())
+        assert {path.name for name, path in files.items() if name != "metadata"} == metadata["sha256"].keys()
+        assert Path(run["generated_numpy"]) == Path("var/hardware-data") / run["run_id"] / "shots.npz"
+    assert len(cataloged_manifests) == len(catalog["runs"])
+    assert cataloged_manifests == set(DATA_ROOT.rglob("metadata.json"))
+
+    viewer = catalog["computed_correlations"]["eight_round_viewer"]
+    assert (repo / viewer["html"]).is_file()
+    assert (repo / viewer["json_format"]).is_file()
+    for export in viewer["exports"]:
+        assert export["source_run_id"] in {run["run_id"] for run in catalog["runs"]}
+        assert all((repo / path).is_file() for path in export["files"].values())
+        document = json.loads((repo / export["files"]["qubit_json"]).read_text())
+        assert export["final_readout_included"] == document["source"]["final_readout_included"]
+        assert export["selection"] == document["source"]["selection"]
+        assert export["rounds_shown"] == document["rounds"]
+        assert export["shots"] == document["shots"]

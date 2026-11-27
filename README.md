@@ -1,5 +1,9 @@
 # fdem
 
+For recorded Google Willow and Shenzhen shots, start with the
+[hardware data guide](data/ler/README.md) or the
+[machine-readable run catalog](data/ler/catalog.json).
+
 A minimal example that estimates the logical error rate (LER) of a rotated surface
 code from syndrome samples produced by a noisy circuit exported by the THeatA
 workbench.
