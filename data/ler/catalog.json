@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "path_base": "repository_root",
+  "recorded_shot_order": "original_acquisition_order",
+  "pairing": "A row index refers to the same recorded shot in detection_events and observable_flips.",
+  "runs": [
+    {
+      "run_id": "d3_at_q6_7/Z/r10",
+      "device": "google",
+      "distance": 3,
+      "basis": "Z",
+      "rounds": 10,
+      "shots": 50000,
+      "detectors": 80,
+      "observables": 1,
+      "source_doi": "10.5281/zenodo.13273331",
+      "recorded_stim": {
+        "detection_events": "data/ler/d3_at_q6_7/Z/r10/detection_events.b8",
+        "observable_flips": "data/ler/d3_at_q6_7/Z/r10/obs_flips_actual.b8",
+        "stim_circuit": "data/ler/d3_at_q6_7/Z/r10/circuit.stim",
+        "metadata": "data/ler/d3_at_q6_7/Z/r10/metadata.json"
+      },
+      "generated_numpy": "var/hardware-data/d3_at_q6_7/Z/r10/shots.npz"
+    },
+    {
+      "run_id": "d3_at_q6_7/Z/r13",
+      "device": "google",
+      "distance": 3,
+      "basis": "Z",
+      "rounds": 13,
+      "shots": 50000,
+      "detectors": 104,
+      "observables": 1,
+      "source_doi": "10.5281/zenodo.13273331",
+      "recorded_stim": {
+        "detection_events": "data/ler/d3_at_q6_7/Z/r13/detection_events.b8",
+        "observable_flips": "data/ler/d3_at_q6_7/Z/r13/obs_flips_actual.b8",
+        "stim_circuit": "data/ler/d3_at_q6_7/Z/r13/circuit.stim",
+        "metadata": "data/ler/d3_at_q6_7/Z/r13/metadata.json"
+      },
+      "generated_numpy": "var/hardware-data/d3_at_q6_7/Z/r13/shots.npz"
+    },
+    {
+      "run_id": "d3_at_q6_7/Z/r30",
+      "device": "google",
+      "distance": 3,
+      "basis": "Z",
+      "rounds": 30,
+      "shots": 50000,
+      "detectors": 240,
+      "observables": 1,
+      "source_doi": "10.5281/zenodo.13273331",
+      "recorded_stim": {
+        "detection_events": "data/ler/d3_at_q6_7/Z/r30/detection_events.b8",
+        "observable_flips": "data/ler/d3_at_q6_7/Z/r30/obs_flips_actual.b8",
+        "stim_circuit": "data/ler/d3_at_q6_7/Z/r30/circuit.stim",
+        "metadata": "data/ler/d3_at_q6_7/Z/r30/metadata.json"
+      },
+      "generated_numpy": "var/hardware-data/d3_at_q6_7/Z/r30/shots.npz"
+    },
+    {
+      "run_id": "shenzhen_qec_19908642/Z/r8",
+      "device": "shenzhen",
+      "distance": 3,
+      "basis": "Z",
+      "rounds": 8,
+      "shots": 10000,
+      "detectors": 64,
+      "observables": 1,
+      "source_doi": "10.5281/zenodo.19908642",
+      "recorded_stim": {
+        "detection_events": "data/ler/shenzhen_qec_19908642/Z/r8/detection_events.b8",
+        "observable_flips": "data/ler/shenzhen_qec_19908642/Z/r8/obs_flips_actual.b8",
+        "stim_circuit": "data/ler/shenzhen_qec_19908642/Z/r8/circuit.stim",
+        "metadata": "data/ler/shenzhen_qec_19908642/Z/r8/metadata.json",
+        "detector_mapping": "data/ler/shenzhen_qec_19908642/Z/r8/detector_mapping.stim"
+      },
+      "generated_numpy": "var/hardware-data/shenzhen_qec_19908642/Z/r8/shots.npz"
+    },
+    {
+      "run_id": "shenzhen_qec_19908642/Z/r10",
+      "device": "shenzhen",
+      "distance": 3,
+      "basis": "Z",
+      "rounds": 10,
+      "shots": 10000,
+      "detectors": 80,
+      "observables": 1,
+      "source_doi": "10.5281/zenodo.19908642",
+      "recorded_stim": {
+        "detection_events": "data/ler/shenzhen_qec_19908642/Z/r10/detection_events.b8",
+        "observable_flips": "data/ler/shenzhen_qec_19908642/Z/r10/obs_flips_actual.b8",
+        "stim_circuit": "data/ler/shenzhen_qec_19908642/Z/r10/circuit.stim",
+        "metadata": "data/ler/shenzhen_qec_19908642/Z/r10/metadata.json",
+        "detector_mapping": "data/ler/shenzhen_qec_19908642/Z/r10/detector_mapping.stim"
+      },
+      "generated_numpy": "var/hardware-data/shenzhen_qec_19908642/Z/r10/shots.npz"
+    },
+    {
+      "run_id": "shenzhen_qec_19908642/Z/r13",
+      "device": "shenzhen",
+      "distance": 3,
+      "basis": "Z",
+      "rounds": 13,
+      "shots": 10000,
+      "detectors": 104,
+      "observables": 1,
+      "source_doi": "10.5281/zenodo.19908642",
+      "recorded_stim": {
+        "detection_events": "data/ler/shenzhen_qec_19908642/Z/r13/detection_events.b8",
+        "observable_flips": "data/ler/shenzhen_qec_19908642/Z/r13/obs_flips_actual.b8",
+        "stim_circuit": "data/ler/shenzhen_qec_19908642/Z/r13/circuit.stim",
+        "metadata": "data/ler/shenzhen_qec_19908642/Z/r13/metadata.json",
+        "detector_mapping": "data/ler/shenzhen_qec_19908642/Z/r13/detector_mapping.stim"
+      },
+      "generated_numpy": "var/hardware-data/shenzhen_qec_19908642/Z/r13/shots.npz"
+    },
+    {
+      "run_id": "shenzhen_qec_19908642/Z/r20",
+      "device": "shenzhen",
+      "distance": 3,
+      "basis": "Z",
+      "rounds": 20,
+      "shots": 10000,
+      "detectors": 160,
+      "observables": 1,
+      "source_doi": "10.5281/zenodo.19908642",
+      "recorded_stim": {
+        "detection_events": "data/ler/shenzhen_qec_19908642/Z/r20/detection_events.b8",
+        "observable_flips": "data/ler/shenzhen_qec_19908642/Z/r20/obs_flips_actual.b8",
+        "stim_circuit": "data/ler/shenzhen_qec_19908642/Z/r20/circuit.stim",
+        "metadata": "data/ler/shenzhen_qec_19908642/Z/r20/metadata.json",
+        "detector_mapping": "data/ler/shenzhen_qec_19908642/Z/r20/detector_mapping.stim"
+      },
+      "generated_numpy": "var/hardware-data/shenzhen_qec_19908642/Z/r20/shots.npz"
+    }
+  ],
+  "generated_numpy": {
+    "storage": "git_ignored_local_output",
+    "command": [
+      "python",
+      "-m",
+      "fdem.hardware_data"
+    ],
+    "columns": "original Stim detector and observable ID order",
+    "arrays": {
+      "detection_events": {
+        "dtype": "bool",
+        "axes": [
+          "shots",
+          "detectors"
+        ]
+      },
+      "observable_flips": {
+        "dtype": "bool",
+        "axes": [
+          "shots",
+          "observables"
+        ]
+      }
+    },
+    "metadata_keys": [
+      "metadata_json",
+      "circuit_stim"
+    ],
+    "optional_metadata_keys": [
+      "detector_mapping_stim"
+    ]
+  },
+  "computed_correlations": {
+    "eight_round_viewer": {
+      "storage": "checked_in",
+      "html": "docs/qec-eight-round-correlations/index.html",
+      "json_format": "docs/qec-eight-round-correlations/PIJ_JSON_FORMAT.md",
+      "exports": [
+        {
+          "source_run_id": "d3_at_q6_7/Z/r10",
+          "rounds_shown": 8,
+          "shots": 50000,
+          "selection": "prefix",
+          "final_readout_included": false,
+          "files": {
+            "qubit_json": "docs/qec-eight-round-correlations/d3_at_q6_7/Z/r8/pij.json",
+            "detector_csv": "docs/qec-eight-round-correlations/d3_at_q6_7/Z/r8/pij.csv",
+            "detector_map_csv": "docs/qec-eight-round-correlations/d3_at_q6_7/Z/r8/detectors.csv",
+            "heatmap": "docs/qec-eight-round-correlations/d3_at_q6_7/Z/r8/pij.png"
+          }
+        },
+        {
+          "source_run_id": "shenzhen_qec_19908642/Z/r8",
+          "rounds_shown": 8,
+          "shots": 10000,
+          "selection": "dedicated_run",
+          "final_readout_included": true,
+          "files": {
+            "qubit_json": "docs/qec-eight-round-correlations/shenzhen_qec_19908642/Z/r8/pij.json",
+            "detector_csv": "docs/qec-eight-round-correlations/shenzhen_qec_19908642/Z/r8/pij.csv",
+            "detector_map_csv": "docs/qec-eight-round-correlations/shenzhen_qec_19908642/Z/r8/detectors.csv",
+            "heatmap": "docs/qec-eight-round-correlations/shenzhen_qec_19908642/Z/r8/pij.png"
+          }
+        }
+      ]
+    },
+    "full_run_calibration": {
+      "storage": "generated_in_separate_checkout",
+      "repository": "theata-prior-calibration",
+      "path_base": "external_repository_root",
+      "notebook": "notebooks/hardware_prior_calibration.ipynb",
+      "output_pattern": "results/hardware_calibration/{device}/r{rounds}/pij.json",
+      "shot_selection": "calibration_split",
+      "default_calibration_shots": 5000
+    }
+  }
+}

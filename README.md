@@ -1,5 +1,9 @@
 # fdem
 
+For recorded Google Willow and Shenzhen shots, start with the
+[hardware data guide](data/ler/README.md) or the
+[machine-readable run catalog](data/ler/catalog.json).
+
 A minimal example that estimates the logical error rate (LER) of a rotated surface
 code from syndrome samples produced by a noisy circuit exported by the THeatA
 workbench.
@@ -165,3 +169,11 @@ detector-indexed CSV, heatmaps, and a standalone comparison viewer.
 Google Willow uses the first eight rounds of the released 10-round run.
 The Shenzhen IQA / SUSTech run includes a final readout after eight rounds.
 [Dataset links and JSON format](docs/qec-eight-round-correlations/PIJ_JSON_FORMAT.md)
+
+## Recorded hardware data
+
+The [hardware data inventory](data/ler/README.md) contains paired detector
+events and logical-observable flips for complete distance-3 Google Willow
+and Shenzhen Z-memory runs. Run `python -m fdem.hardware_data` to validate
+the Stim bundles and export analysis-ready NumPy arrays with all recorded
+shots in their original order.

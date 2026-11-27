@@ -1,0 +1,27 @@
+{
+  "name": "shenzhen_qec_19908642/Z/r13",
+  "dataset": "Shenzhen IQA / SUSTech",
+  "source_doi": "10.5281/zenodo.19908642",
+  "license": "CC-BY-4.0",
+  "paper": "https://arxiv.org/html/2605.04892v1",
+  "archive": "01_data_for_Fig2d_FigS3a.rar",
+  "archive_member": "01_data_for_Fig2d_FigS3a/42681 - fb_data.npz",
+  "source_file_id": 42681,
+  "source_sha256": "1dcdcafc550f8bf5d221ec194b9e6591a9579d4a3b8d77c8d1e7b90ac17f3237",
+  "distance": 3,
+  "basis": "Z",
+  "initial_state": "0_L",
+  "active_feedback": false,
+  "rounds": 13,
+  "shots": 10000,
+  "detectors": 104,
+  "observables": 1,
+  "circuit": "reconstructed by fdem.shenzhen_circuit from detector_mapping.stim; CNOT order assumed",
+  "records": "reconstructed from the classified FPGA readouts; every detection event matched the FPGA record",
+  "sha256": {
+    "circuit.stim": "faa2ee5971a687d3e951f7956684dd356bdbc4403aee1d6d3eb32d4747b6a049",
+    "detector_mapping.stim": "c7c1daad5bfc9778603dc79a8a0a5371d4c438483b47e8c0d103ab41b9b55e11",
+    "detection_events.b8": "0c5b8f169fce69fcb551ca7ddf5c989bf41fea4ed51b04e8b51bacc178321d9e",
+    "obs_flips_actual.b8": "72a96571a45460aba8ad36eb5aa0284990c050c8bc74301f6eebcad9cc86d892"
+  }
+}
