@@ -16,6 +16,19 @@ _Z_MEASURE_RESETS = {"MR", "MRZ"}
 _X_MEASURE_RESETS = {"MRX"}
 
 
+def validate_experiment_name(experiment_name: str) -> None:
+    """Check that an experiment name selects a single directory component.
+
+    Args:
+        experiment_name: Name supplied by the experiment caller.
+
+    Raises:
+        ValueError: If the name is empty, absolute, nested, or a dot directory.
+    """
+    if experiment_name in {"", ".", ".."} or Path(experiment_name).name != experiment_name:
+        raise ValueError("Experiment name must be a single directory name")
+
+
 def _load_physical_device_circuit(
     experiment_name: str,
     experiments_directory: Path = Path("experiments"),
@@ -38,14 +51,7 @@ def _load_physical_device_circuit(
             detectors and at least one logical observable.
         FileNotFoundError: If the experiment circuit does not exist.
     """
-    experiment_path = Path(experiment_name)
-    if (
-        not experiment_name
-        or experiment_name in {".", ".."}
-        or experiment_path.name != experiment_name
-    ):
-        raise ValueError("Experiment name must be a single directory name")
-
+    validate_experiment_name(experiment_name)
     circuit_path = experiments_directory / experiment_name / _CIRCUIT_FILENAME
     if not circuit_path.is_file():
         raise FileNotFoundError(f"Experiment circuit not found: {circuit_path}")
@@ -197,14 +203,32 @@ def get_reference_dem(
             the circuit does not define detectors and at least one observable.
         FileNotFoundError: If the experiment circuit does not exist.
     """
-    if not np.isfinite(error_probability) or not 0 <= error_probability <= 1:
-        raise ValueError("Error probability must be finite and between 0 and 1")
     physical_circuit = _load_physical_device_circuit(
         experiment_name,
         experiments_directory,
     )
-    ideal_circuit = physical_circuit.without_noise()
-    reference_circuit = _add_uniform_noise(ideal_circuit, error_probability)
+    return reference_dem_from_circuit(physical_circuit, error_probability)
+
+
+def reference_dem_from_circuit(
+    circuit: stim.Circuit,
+    error_probability: float = 0.001,
+) -> stim.DetectorErrorModel:
+    """Build the uniformly noisy reference DEM for an annotated Stim circuit.
+
+    Args:
+        circuit: Circuit defining detection events and logical observables.
+        error_probability: Probability used for all artificial physical errors.
+
+    Returns:
+        A flattened detector error model in the circuit's detector order.
+
+    Raises:
+        ValueError: If the probability is invalid or Stim cannot build the DEM.
+    """
+    if not np.isfinite(error_probability) or not 0 <= error_probability <= 1:
+        raise ValueError("Error probability must be finite and between 0 and 1")
+    reference_circuit = _add_uniform_noise(circuit.without_noise(), error_probability)
     return reference_circuit.detector_error_model(
         decompose_errors=True
     ).flattened()

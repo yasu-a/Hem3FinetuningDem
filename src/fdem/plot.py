@@ -210,18 +210,18 @@ def save_ler_plot(
     ler_history: list[tuple[int, float]],
     initial_ler: float,
     optimized_ler: float,
-    baseline_ler: float,
+    baseline_ler: float | None,
     final_evaluation: int,
     output_path: Path,
 ) -> None:
-    """Save the complete logical-error-rate history as one line.
+    """Save the LER history or the two held-out LER measurements.
 
     Args:
         ler_history: Intermediate objective-evaluation numbers and candidate LER
             values.
         initial_ler: Logical error rate at evaluation zero, before optimization.
         optimized_ler: Logical error rate of the DEM returned by the optimizer.
-        baseline_ler: Logical error rate obtained from the physical-device DEM.
+        baseline_ler: LER from the simulator's DEM, or None for a held-out comparison.
         final_evaluation: Evaluation number used for the final optimized point.
         output_path: Output path for the generated figure.
 
@@ -236,36 +236,29 @@ def save_ler_plot(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(figsize=(3.2, 2.8))
-    intermediate_history = [
-        (evaluation, ler)
-        for evaluation, ler in ler_history
-        if 0 < evaluation < final_evaluation
-    ]
-    complete_history = [
-        (0, initial_ler),
-        *intermediate_history,
-        (final_evaluation, optimized_ler),
-    ]
-    evaluations, values = zip(*complete_history)
-    axes.plot(
-        evaluations,
-        values,
-        marker="o",
-        markersize=3,
-        label="Training",
-    )
-    axes.axhline(
-        baseline_ler,
-        color="tab:orange",
-        linestyle="--",
-        label="Physical-device DEM",
-    )
-    axes.set_title("LER History", fontsize=12)
-    axes.set_xlabel("Objective Evaluation", fontsize=11)
+    if baseline_ler is None:
+        axes.plot(["Initial DEM", "Fitted DEM"], [initial_ler, optimized_ler], marker="o")
+        axes.set_title("Held-out LER", fontsize=12)
+    else:
+        intermediate_history = [
+            (evaluation, ler)
+            for evaluation, ler in ler_history
+            if 0 < evaluation < final_evaluation
+        ]
+        complete_history = [
+            (0, initial_ler),
+            *intermediate_history,
+            (final_evaluation, optimized_ler),
+        ]
+        evaluations, values = zip(*complete_history)
+        axes.plot(evaluations, values, marker="o", markersize=3, label="Training")
+        axes.axhline(baseline_ler, color="tab:orange", linestyle="--", label="Physical-device DEM")
+        axes.set_title("LER History", fontsize=12)
+        axes.set_xlabel("Objective Evaluation", fontsize=11)
+        axes.legend(fontsize=8)
     axes.set_ylabel("LER", fontsize=11)
     axes.tick_params(labelsize=10)
     axes.grid(axis="y", alpha=0.3)
-    axes.legend(fontsize=8)
     figure.tight_layout()
     figure.savefig(output_path, dpi=150)
     plt.close(figure)

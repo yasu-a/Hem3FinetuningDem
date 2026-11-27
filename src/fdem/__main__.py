@@ -1,6 +1,7 @@
 """Minimal example for estimating a rotated surface code LER using a Stim DEM."""
 
 import argparse
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -14,7 +15,9 @@ from .dem import detector_support, with_priors
 from .device import (
     get_reference_dem,
     logical_error_rate_from_physical_device_dem,
+    reference_dem_from_circuit,
     sample_physical_device_syndromes,
+    validate_experiment_name,
 )
 from .pij import (
     dem_pair_probabilities,
@@ -28,6 +31,7 @@ from .plot import (
     save_pair_loss_plot,
     save_single_loss_plot,
 )
+from .shot_data import load_recorded_shots, split_recorded_shots
 from .statistics import DetectorPairCorrelationStatistics, ISyndromeStatistics
 
 
@@ -96,7 +100,17 @@ def parse_arguments() -> argparse.Namespace:
         default="auto",
         help="Positive pair-MSE weight or 'auto' (default: auto)",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--shot-data",
+        type=Path,
+        help="Directory with recorded Stim-format shots and their ideal circuit",
+    )
+    arguments = parser.parse_args()
+    try:
+        validate_experiment_name(arguments.experiment)
+    except ValueError as error:
+        parser.error(str(error))
+    return arguments
 
 
 def resolve_pair_loss_weight(
@@ -175,9 +189,27 @@ def logical_error_rate(
     Returns:
         The fraction of shots decoded with at least one incorrect observable.
     """
+    return logical_failure_count(dem, detectors, observables) / len(detectors)
+
+
+def logical_failure_count(
+    dem: stim.DetectorErrorModel,
+    detectors: np.ndarray,
+    observables: np.ndarray,
+) -> int:
+    """Count shots for which matching predicts any logical observable incorrectly.
+
+    Args:
+        dem: Detector error model used to build the matching decoder.
+        detectors: Evaluation detection events in detector ID order.
+        observables: Observed logical flips for the same shots.
+
+    Returns:
+        The number of shots with at least one incorrect observable.
+    """
     decoder = pymatching.Matching.from_detector_error_model(dem)
     predictions = decoder.decode_batch(detectors)
-    return float((predictions != observables).any(axis=1).mean())
+    return int(np.count_nonzero(np.any(predictions != observables, axis=1)))
 
 
 def prior_change_summary(
@@ -492,29 +524,31 @@ def main() -> None:
     print(f"experiment = {arguments.experiment}")
     print(f"training method = {arguments.training_method}")
 
-    # 1. Collect training and evaluation data through the device sampling interface.
-    syndrome_samples = sample_physical_device_syndromes(
-        arguments.experiment,
-        SHOTS,
-        SEED,
-    )
-    detector_samples, actual_observables = sample_physical_device_syndromes(
-        arguments.experiment,
-        SHOTS,
-        SEED + 2,
-        separate_observables=True,
-    )
+    recorded = arguments.shot_data is not None
+    if recorded:
+        try:
+            circuit, recorded_detectors, recorded_observables = load_recorded_shots(arguments.shot_data)
+        except (OSError, ValueError) as error:
+            raise SystemExit(f"Could not load recorded shots: {error}") from None
+        syndrome_samples, detector_samples, actual_observables = split_recorded_shots(
+            recorded_detectors, recorded_observables, seed=SEED
+        )
+        initial_dem = reference_dem_from_circuit(circuit, REFERENCE_ERROR_PROBABILITY)
+        print(f"recorded shots = {arguments.shot_data}")
+        print(f"training shots = {len(syndrome_samples)}")
+        print(f"held-out shots = {len(detector_samples)}")
+    else:
+        syndrome_samples = sample_physical_device_syndromes(arguments.experiment, SHOTS, SEED)
+        detector_samples, actual_observables = sample_physical_device_syndromes(
+            arguments.experiment, SHOTS, SEED + 2, separate_observables=True
+        )
+        initial_dem = get_reference_dem(arguments.experiment, REFERENCE_ERROR_PROBABILITY)
     if syndrome_samples.shape[1] != detector_samples.shape[1]:
         raise ValueError("Training and evaluation detector counts must match")
 
     print(f"detectors = {syndrome_samples.shape[1]}")
     print(f"observables = {actual_observables.shape[1]}")
 
-    # 2. Build the reference DEM from ideal circuit structure and uniform noise.
-    initial_dem = get_reference_dem(
-        arguments.experiment,
-        error_probability=REFERENCE_ERROR_PROBABILITY,
-    )
     if initial_dem.num_detectors != syndrome_samples.shape[1]:
         raise ValueError("Reference DEM and device detector counts must match")
     if initial_dem.num_observables != actual_observables.shape[1]:
@@ -522,6 +556,8 @@ def main() -> None:
     error_instructions = [
         instruction for instruction in initial_dem if instruction.type == "error"
     ]
+    if not error_instructions:
+        raise ValueError("The reference DEM contains no error mechanisms to fit")
     component_statistics = DetectorPairCorrelationStatistics()
     syndrome_correlations = component_statistics.calculate(syndrome_samples)
     initial_dem_correlations = dem_pair_probabilities(initial_dem)
@@ -557,13 +593,6 @@ def main() -> None:
     print(f"initial pair MSE = {initial_pair_mse:.8g}")
     print(f"pair loss weight = {pair_loss_weight:.8g}")
 
-    # 3. Track LER using the fixed evaluation samples collected above.
-    initial_ler = logical_error_rate(initial_dem, detector_samples, actual_observables)
-    physical_dem_ler = logical_error_rate_from_physical_device_dem(
-        arguments.experiment,
-        detector_samples,
-        actual_observables,
-    )
     ler_history: list[tuple[int, float]] = []
     latest_ler: float | None = None
 
@@ -596,7 +625,7 @@ def main() -> None:
                 pair_rmse_history,
                 combined_rmse_history,
             )
-            if evaluation % LER_EVALUATION_INTERVAL == 0:
+            if not recorded and evaluation % LER_EVALUATION_INTERVAL == 0:
                 latest_ler = logical_error_rate(
                     candidate_dem,
                     detector_samples,
@@ -641,13 +670,45 @@ def main() -> None:
                 callback=update_progress,
             )
 
-    # 4. Evaluate the optimized decoder on the same fixed data.
-    optimized_ler = logical_error_rate(optimized_dem, detector_samples, actual_observables)
+    evaluation_shots = len(detector_samples)
+    initial_failures = logical_failure_count(initial_dem, detector_samples, actual_observables)
+    optimized_failures = logical_failure_count(optimized_dem, detector_samples, actual_observables)
+    initial_ler = initial_failures / evaluation_shots
+    optimized_ler = optimized_failures / evaluation_shots
+    physical_dem_ler = None
+    if not recorded:
+        physical_dem_ler = logical_error_rate_from_physical_device_dem(
+            arguments.experiment, detector_samples, actual_observables
+        )
     optimized_dem_correlations = dem_pair_probabilities(optimized_dem)
     optimized_metrics = statistics_calculator.metrics(
         syndrome_correlations,
         optimized_dem_correlations,
     )
+    run = None
+    if recorded:
+        held_out_correlations = statistics_calculator.calculate(detector_samples)
+        initial_held_out = statistics_calculator.metrics(held_out_correlations, initial_dem_correlations)
+        optimized_held_out = statistics_calculator.metrics(held_out_correlations, optimized_dem_correlations)
+        for label, failures, metrics in (
+            ("initial", initial_failures, initial_held_out),
+            ("optimized", optimized_failures, optimized_held_out),
+        ):
+            print(f"{label} held-out logical failures = {failures} / {evaluation_shots}")
+            print(f"{label} held-out single RMSE = {metrics['single_rmse']:.8g}")
+            print(f"{label} held-out pair RMSE = {metrics['pair_rmse']:.8g}")
+        run = {
+            "shot_data": str(arguments.shot_data),
+            "split_seed": SEED,
+            "train_shots": len(syndrome_samples),
+            "test_shots": evaluation_shots,
+            "training_method": arguments.training_method,
+            "pair_loss_weight": pair_loss_weight,
+            "reference_error_probability": REFERENCE_ERROR_PROBABILITY,
+            "initial": {**initial_held_out, "logical_failures": initial_failures, "ler": initial_ler},
+            "fitted": {**optimized_held_out, "logical_failures": optimized_failures, "ler": optimized_ler},
+        }
+
     prior_summary = prior_change_summary(initial_dem, optimized_dem)
     save_loss_plot(combined_rmse_history, loss_plot_path)
     save_single_loss_plot(single_rmse_history, single_loss_plot_path)
@@ -666,6 +727,11 @@ def main() -> None:
         len(loss_history),
         ler_plot_path,
     )
+    if run is not None:
+        optimized_dem.to_file(experiment_results_directory / "fitted.dem")
+        (experiment_results_directory / "run.json").write_text(
+            json.dumps(run, indent=2, allow_nan=False) + "\n", encoding="utf-8"
+        )
 
     print(f"DEM error instructions = {len(error_instructions)}")
     print(f"first initial error = {error_instructions[0]}")
@@ -682,7 +748,8 @@ def main() -> None:
     print(f"best RMSE = {min(loss_history):.8g}")
     print(f"initial LER = {initial_ler:.6g}")
     print(f"optimized LER = {optimized_ler:.6g}")
-    print(f"physical-device DEM LER = {physical_dem_ler:.6g}")
+    if physical_dem_ler is not None:
+        print(f"physical-device DEM LER = {physical_dem_ler:.6g}")
     print(f"single-detector error mechanisms = {prior_summary['single_detector_count']}")
     print(
         "multiple-detector error mechanisms = "

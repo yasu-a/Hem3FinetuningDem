@@ -1,8 +1,8 @@
 # fdem
 
 A minimal example that estimates the logical error rate (LER) of a rotated surface
-code from syndrome samples produced by a noisy circuit exported by the THeatA
-workbench.
+code using recorded hardware shots or syndrome samples from a noisy circuit exported
+by the THeatA workbench.
 
 The device module exposes sampled detector events and a reference DEM. To build the
 reference, it removes all noise from the experiment circuit, adds uniform gate, reset,
@@ -157,6 +157,36 @@ For detector-event arrays collected outside the bundled device simulator, call
 `fdem.correlations.detector_pair_correlations(syndromes)` and pass the resulting
 matrix with the baseline DEM to `fdem.pij.fit_dem_from_pij`. Use
 `fdem.pij.dem_pair_probabilities` to calculate the matrix for a DEM directly.
+
+## Fit and evaluate a DEM on recorded hardware shots
+
+The [Google Quantum AI Willow dataset](https://zenodo.org/records/13273331) contains
+surface-code memory shots recorded on hardware. For a first run, extract the complete
+`d3_at_q6_7/Z/r10` directory from `google_105Q_surface_code_d3_d5_d7.zip` into
+`var/qec-data/willow/d3_at_q6_7/Z/r10/`. This distance-3, ten-round experiment includes
+the final data-qubit readout used in the logical measurement. The archive is 5.7 GB.
+
+```console
+python -m fdem --experiment willow-d3-q6_7-z-r10 --shot-data var/qec-data/willow/d3_at_q6_7/Z/r10 --training-method lsq
+```
+
+The required files are `circuit_ideal.stim`, `detection_events.b8`, and
+`obs_flips_actual.b8` from the same run. If present, `metadata.json` supplies the shot
+count. When `measurements.b8` is present, the loader checks that Stim reproduces all
+published detector and observable bits from the raw measurements, using `sweep_bits.b8`
+for circuits that define sweep controls. Keep these files together in their published
+order.
+
+The command holds out one fifth of the shots using seed 0. For this 50,000-shot run,
+40,000 shots determine the detector statistics for fitting, and 10,000 are used to
+score both the uniformly noisy reference DEM and the fitted DEM. `run.json` records
+the split, settings, held-out single and pair RMSE, logical failure counts, and LER.
+`fitted.dem` and the plots are saved alongside it under
+`var/willow-d3-q6_7-z-r10/lsq/weight-auto/`. The heatmaps and optimization loss use
+the training shots. `ler.png` shows the two held-out measurements.
+
+For a THeatA circuit export, run `python -m fdem --experiment theata-d3-r5-pij`
+to generate simulated shots.
 
 ## Experimental eight-round surface-code correlations
 
